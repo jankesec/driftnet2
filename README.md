@@ -26,14 +26,14 @@ Driftnet2 silently extracts credentials, session tokens, and NTLM hashes from li
               ┌────────────▼────────────┐
               │     Go Userspace        │
               │  ┌──────────────────┐   │
-              │  │  Protocol Parsers │   │
-              │  │ HTTP/DNS/SMB/LDAP │   │
-              │  │ FTP/Telnet/POP3   │   │
-              │  │ IMAP/SMTP         │   │
+              │  │  Protocol Parsers│   │
+              │  │ HTTP/DNS/SMB/LDAP│   │
+              │  │ FTP/Telnet/POP3  │   │
+              │  │ IMAP/SMTP        │   │
               │  └────────┬─────────┘   │
               │           ▼             │
               │  ┌──────────────────┐   │
-              │  │ Credential Regex  │   │
+              │  │ Credential Regex │   │
               │  └────────┬─────────┘   │
               │           ▼             │
               │  ┌──────────────────┐   │
