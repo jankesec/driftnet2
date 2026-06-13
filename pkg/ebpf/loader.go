@@ -13,27 +13,39 @@ import (
 )
 
 type PacketEvent struct {
-	SrcIP      uint32
-	DstIP      uint32
+	SrcIP      [16]byte
+	DstIP      [16]byte
 	SrcPort    uint16
 	DstPort    uint16
 	Protocol   uint8
 	Flags      uint8
 	PayloadLen uint16
 	_          [2]byte
-	Data       [1480]byte
+	Data       [1458]byte
 }
 
 func (e PacketEvent) SrcIPString() string {
-	return uint32ToIP(e.SrcIP).String()
+	return ip16ToString(e.SrcIP)
 }
 
 func (e PacketEvent) DstIPString() string {
-	return uint32ToIP(e.DstIP).String()
+	return ip16ToString(e.DstIP)
 }
 
-func uint32ToIP(n uint32) net.IP {
-	return net.IPv4(byte(n), byte(n>>8), byte(n>>16), byte(n>>24))
+func ip16ToString(b [16]byte) string {
+	if isIPv4(b) {
+		return net.IPv4(b[12], b[13], b[14], b[15]).String()
+	}
+	return net.IP(b[:]).String()
+}
+
+func isIPv4(b [16]byte) bool {
+	for i := 0; i < 10; i++ {
+		if b[i] != 0 {
+			return false
+		}
+	}
+	return b[10] == 0 && b[11] == 0
 }
 
 type XDPSniffer struct {

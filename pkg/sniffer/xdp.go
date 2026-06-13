@@ -2,6 +2,7 @@ package sniffer
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/byjanke/driftnet2/pkg/ebpf"
 )
@@ -25,12 +26,13 @@ func NewXDPLive(iface string) (*xdpWrapper, error) {
 	go func() {
 		for evt := range xdp.Events() {
 			w.ch <- &RawPacket{
-				SrcIP:    evt.SrcIPString(),
-				DstIP:    evt.DstIPString(),
-				SrcPort:  evt.SrcPort,
-				DstPort:  evt.DstPort,
-				Protocol: evt.Protocol,
-				Payload:  evt.Data[:evt.PayloadLen],
+				Timestamp: time.Now(),
+				SrcIP:     evt.SrcIPString(),
+				DstIP:     evt.DstIPString(),
+				SrcPort:   evt.SrcPort,
+				DstPort:   evt.DstPort,
+				Protocol:  evt.Protocol,
+				Payload:   evt.Data[:evt.PayloadLen],
 			}
 		}
 		close(w.ch)

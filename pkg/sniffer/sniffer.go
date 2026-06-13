@@ -3,6 +3,7 @@ package sniffer
 import (
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -10,17 +11,24 @@ import (
 )
 
 type AFPacketSniffer struct {
-	handle *pcap.Handle
-	stopCh chan struct{}
+	handle   *pcap.Handle
+	linkType layers.LinkType
+	stopCh   chan struct{}
 }
 
 type RawPacket struct {
-	SrcIP    string
-	DstIP    string
-	SrcPort  uint16
-	DstPort  uint16
-	Protocol uint8
-	Payload  []byte
+	Timestamp time.Time
+	SrcIP     string
+	DstIP     string
+	SrcPort   uint16
+	DstPort   uint16
+	Protocol  uint8
+	Payload   []byte
+	FullData  []byte
+}
+
+func (s *AFPacketSniffer) LinkType() layers.LinkType {
+	return s.linkType
 }
 
 func NewAFPacketSniffer(iface string) (*AFPacketSniffer, error) {
@@ -36,8 +44,9 @@ func NewAFPacketSniffer(iface string) (*AFPacketSniffer, error) {
 	}
 
 	return &AFPacketSniffer{
-		handle: handle,
-		stopCh: make(chan struct{}),
+		handle:   handle,
+		linkType: handle.LinkType(),
+		stopCh:   make(chan struct{}),
 	}, nil
 }
 
@@ -48,8 +57,9 @@ func NewPCAPSniffer(filename string) (*AFPacketSniffer, error) {
 	}
 
 	return &AFPacketSniffer{
-		handle: handle,
-		stopCh: make(chan struct{}),
+		handle:   handle,
+		linkType: handle.LinkType(),
+		stopCh:   make(chan struct{}),
 	}, nil
 }
 
@@ -101,8 +111,10 @@ func convertPacket(pkt gopacket.Packet) *RawPacket {
 	}
 
 	rp := &RawPacket{
-		SrcIP: srcIP,
-		DstIP: dstIP,
+		Timestamp: pkt.Metadata().Timestamp,
+		SrcIP:     srcIP,
+		DstIP:     dstIP,
+		FullData:  pkt.Data(),
 	}
 
 	if tcpLayer := pkt.Layer(layers.LayerTypeTCP); tcpLayer != nil {
@@ -127,4 +139,11 @@ func convertPacket(pkt gopacket.Packet) *RawPacket {
 func IsInterfaceValid(iface string) bool {
 	_, err := net.InterfaceByName(iface)
 	return err == nil
+}
+
+func LinkTypeFromSniffer(sniff interface{}) layers.LinkType {
+	if s, ok := sniff.(*AFPacketSniffer); ok {
+		return s.LinkType()
+	}
+	return layers.LinkTypeRaw
 }

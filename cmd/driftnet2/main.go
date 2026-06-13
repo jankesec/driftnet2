@@ -101,7 +101,8 @@ func main() {
 
 	var pcapW *sniffer.PCAPWriter
 	if *pcapWrite != "" {
-		pcapW, err = sniffer.NewPCAPWriter(*pcapWrite)
+		linkType := sniffer.LinkTypeFromSniffer(sniff)
+		pcapW, err = sniffer.NewPCAPWriter(*pcapWrite, linkType)
 		if err != nil {
 			log.Fatalf("pcap writer: %v", err)
 		}
@@ -192,6 +193,10 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 			allCreds = append(allCreds, c)
 			fmt.Printf("[%s] %s %s:%s → %s\n", c.Protocol, c.Type, c.SrcIP, c.DstIP, c.String())
 		}
+		if verbose && len(creds) == 0 {
+			fmt.Printf("[pkt %d] %s:%d → %s:%d proto=%d len=%d\n",
+				pktCount, pkt.SrcIP, pkt.SrcPort, pkt.DstIP, pkt.DstPort, pkt.Protocol, len(pkt.Payload))
+		}
 	}
 
 	fmt.Printf("\n[*] %d packets processed, %d unique credentials found in %s\n", pktCount, len(allCreds), filename)
@@ -238,9 +243,9 @@ func dispatchProtocol(pkt *sniffer.RawPacket, protoSet map[string]bool) []protoc
 }
 
 func dedupKey(c protocol.Credential) string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s",
 		c.Protocol, c.Type, c.SrcIP, c.DstIP,
-		c.Username, c.Password, c.Token)
+		c.Username, c.Password, c.Token, c.Hash, c.DNSQuery)
 }
 
 func parseProtoSet(protoStr string) map[string]bool {

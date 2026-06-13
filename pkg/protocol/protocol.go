@@ -72,8 +72,15 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 	var creds []Credential
 
 	lines := strings.Split(text, "\r\n")
+	headerEnd := -1
+	contentType := ""
 
-	for _, line := range lines {
+	for i, line := range lines {
+		if line == "" {
+			headerEnd = i
+			break
+		}
+
 		if strings.HasPrefix(line, "Authorization: Basic ") {
 			b64 := strings.TrimPrefix(line, "Authorization: Basic ")
 			b64 = strings.TrimSpace(b64)
@@ -152,10 +159,15 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 				creds = append(creds, c)
 			}
 		}
+
+		if strings.HasPrefix(strings.ToLower(line), "content-type:") {
+			contentType = strings.TrimSpace(line[len("content-type:"):])
+		}
 	}
 
-	for _, line := range lines {
-		parsed, err := url.ParseQuery(line)
+	if headerEnd >= 0 && headerEnd < len(lines)-1 && strings.Contains(strings.ToLower(contentType), "x-www-form-urlencoded") {
+		body := strings.Join(lines[headerEnd+1:], "\r\n")
+		parsed, err := url.ParseQuery(body)
 		if err == nil {
 			for userKey, userVals := range parsed {
 				userKeyLower := strings.ToLower(userKey)
@@ -334,7 +346,7 @@ func extractNTLMFields(data []byte) *ntlmFields {
 	if msgType == 3 {
 		ntlm.domain = extractNTLMString(data, ntlmIdx+28)
 		ntlm.user = extractNTLMString(data, ntlmIdx+36)
-		ntlm.ntproof = extractNTLMHex(data, ntlmIdx, 0)
+		ntlm.ntproof = extractNTLMHex(data, ntlmIdx)
 	}
 
 	if ntlm.domain != "" || ntlm.user != "" {
@@ -396,7 +408,7 @@ func decodeUTF16LE(b []byte) string {
 	return string(runes)
 }
 
-func extractNTLMHex(data []byte, baseOffset, _ int) string {
+func extractNTLMHex(data []byte, baseOffset int) string {
 	if len(data) < baseOffset+40 {
 		return hexDump(data[baseOffset:], 32)
 	}
@@ -433,6 +445,12 @@ func parseLDAPSimpleBind(data []byte, srcIP, dstIP string, dstPort uint16) *Cred
 	offset := 2
 	if data[1]&0x80 != 0 {
 		numBytes := int(data[1] & 0x7f)
+		if numBytes == 0 {
+			return nil
+		}
+		if 2+numBytes > len(data) {
+			return nil
+		}
 		offset = 2 + numBytes
 	}
 	if offset >= len(data) {
@@ -569,6 +587,18 @@ func ParseTelnet(payload []byte, srcIP, dstIP string, dstPort uint16) []Credenti
 	return nil
 }
 
+func parseAuthPlain(b64 string) (string, string) {
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(b64))
+	if err != nil {
+		return "", ""
+	}
+	parts := strings.Split(string(decoded), "\x00")
+	if len(parts) >= 3 && parts[1] != "" {
+		return parts[1], parts[2]
+	}
+	return "", ""
+}
+
 // --- POP3 ---
 
 func ParsePOP3(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential {
@@ -595,16 +625,12 @@ func ParsePOP3(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 		}
 
 		if strings.HasPrefix(upper, "AUTH PLAIN ") {
-			b64 := strings.TrimSpace(line[11:])
-			decoded, err := base64.StdEncoding.DecodeString(b64)
-			if err == nil {
-				parts := strings.Split(string(decoded), "\x00")
-				if len(parts) >= 3 && parts[1] != "" {
-					c := newCred("POP3", "AUTH PLAIN", srcIP, dstIP, dstPort)
-					c.Username = parts[1]
-					c.Password = parts[2]
-					creds = append(creds, c)
-				}
+			user, pass := parseAuthPlain(line[11:])
+			if user != "" {
+				c := newCred("POP3", "AUTH PLAIN", srcIP, dstIP, dstPort)
+				c.Username = user
+				c.Password = pass
+				creds = append(creds, c)
 			}
 		}
 	}
@@ -636,18 +662,14 @@ func ParseIMAP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 			}
 		}
 
-		authIdx := strings.Index(upper, " AUTHENTICATE PLAIN ")
-		if authIdx > 0 {
-			b64 := strings.TrimSpace(line[authIdx+20:])
-			decoded, err := base64.StdEncoding.DecodeString(b64)
-			if err == nil {
-				parts := strings.Split(string(decoded), "\x00")
-				if len(parts) >= 3 && parts[1] != "" {
-					c := newCred("IMAP", "AUTH PLAIN", srcIP, dstIP, dstPort)
-					c.Username = parts[1]
-					c.Password = parts[2]
-					creds = append(creds, c)
-				}
+		if strings.Contains(upper, "AUTHENTICATE PLAIN ") {
+			idx := strings.Index(upper, "AUTHENTICATE PLAIN ")
+			user, pass := parseAuthPlain(line[idx+20:])
+			if user != "" {
+				c := newCred("IMAP", "AUTH PLAIN", srcIP, dstIP, dstPort)
+				c.Username = user
+				c.Password = pass
+				creds = append(creds, c)
 			}
 		}
 	}
@@ -661,8 +683,17 @@ func parseIMAPLoginArgs(s string) (string, string) {
 		return "", ""
 	}
 
+	if s[0] == '{' {
+		end := strings.IndexByte(s, '}')
+		if end > 1 && end+2 <= len(s) {
+			s = s[end+2:]
+		} else {
+			return "", ""
+		}
+	}
+
 	var user, pass string
-	if s[0] == '"' {
+	if len(s) > 0 && s[0] == '"' {
 		end := strings.Index(s[1:], "\"")
 		if end < 0 {
 			return "", ""
@@ -674,6 +705,15 @@ func parseIMAPLoginArgs(s string) (string, string) {
 		user = parts[0]
 		if len(parts) > 1 {
 			s = strings.TrimSpace(parts[1])
+		} else {
+			return user, ""
+		}
+	}
+
+	if len(s) > 0 && s[0] == '{' {
+		end := strings.IndexByte(s, '}')
+		if end > 1 && end+2 <= len(s) {
+			s = s[end+2:]
 		} else {
 			return user, ""
 		}
@@ -714,16 +754,12 @@ func ParseSMTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 		}
 
 		if strings.HasPrefix(upper, "AUTH PLAIN ") {
-			b64 := strings.TrimSpace(line[11:])
-			decoded, err := base64.StdEncoding.DecodeString(b64)
-			if err == nil {
-				parts := strings.Split(string(decoded), "\x00")
-				if len(parts) >= 3 {
-					c := newCred("SMTP", "AUTH PLAIN", srcIP, dstIP, dstPort)
-					c.Username = parts[1]
-					c.Password = parts[2]
-					creds = append(creds, c)
-				}
+			user, pass := parseAuthPlain(line[11:])
+			if user != "" {
+				c := newCred("SMTP", "AUTH PLAIN", srcIP, dstIP, dstPort)
+				c.Username = user
+				c.Password = pass
+				creds = append(creds, c)
 			}
 		}
 	}
