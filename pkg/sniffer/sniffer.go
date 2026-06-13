@@ -86,15 +86,23 @@ func (s *AFPacketSniffer) Close() error {
 }
 
 func convertPacket(pkt gopacket.Packet) *RawPacket {
-	ipLayer := pkt.Layer(layers.LayerTypeIPv4)
-	if ipLayer == nil {
+	var srcIP, dstIP string
+
+	if ipLayer := pkt.Layer(layers.LayerTypeIPv4); ipLayer != nil {
+		ip, _ := ipLayer.(*layers.IPv4)
+		srcIP = ip.SrcIP.String()
+		dstIP = ip.DstIP.String()
+	} else if ip6Layer := pkt.Layer(layers.LayerTypeIPv6); ip6Layer != nil {
+		ip6, _ := ip6Layer.(*layers.IPv6)
+		srcIP = ip6.SrcIP.String()
+		dstIP = ip6.DstIP.String()
+	} else {
 		return nil
 	}
-	ip, _ := ipLayer.(*layers.IPv4)
 
 	rp := &RawPacket{
-		SrcIP: ip.SrcIP.String(),
-		DstIP: ip.DstIP.String(),
+		SrcIP: srcIP,
+		DstIP: dstIP,
 	}
 
 	if tcpLayer := pkt.Layer(layers.LayerTypeTCP); tcpLayer != nil {

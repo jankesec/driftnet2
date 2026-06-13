@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/byjanke/driftnet2/pkg/output"
@@ -16,20 +17,22 @@ import (
 )
 
 const banner = `
-   ____       _  __  __ _      _     ____  
-  |  _ \ _ __(_)/ _|/ _| |_ _ | |_  |___ \ 
+   ____       _  __  __ _      _     ____
+  |  _ \ _ __(_)/ _|/ _| |_ _ | |_  |___ \
   | | | | '__| | |_| |_| __/ _ \| __|   __) |
-  | |_| | |  | |  _|  _| || (_) | |_   / __/ 
+  | |_| | |  | |  _|  _| || (_) | |_   / __/
   |____/|_|  |_|_| |_|  \__\___/ \__| |_____|
-                                             
+
     kernel-level packet sniffer & credential extractor
 `
 
 func main() {
 	iface := flag.String("iface", "", "network interface (e.g. eth0, en0)")
 	jsonOut := flag.String("output", "", "JSON output file")
-	protocols := flag.String("proto", "http,dns,smb,ldap", "protocols to sniff")
+	protocols := flag.String("proto", "http,dns,smb,ldap,ftp,telnet,pop3,imap,smtp", "protocols to sniff")
 	pcapRead := flag.String("pcap", "", "read from PCAP file (offline mode)")
+	pcapWrite := flag.String("w", "", "write captured packets to PCAP file")
+	verbose := flag.Bool("v", false, "verbose output (show all protocol events)")
 	flag.Parse()
 
 	fmt.Print(banner)
@@ -37,7 +40,7 @@ func main() {
 	protoSet := parseProtoSet(*protocols)
 
 	if *pcapRead != "" {
-		runOffline(*pcapRead, protoSet, *jsonOut)
+		runOffline(*pcapRead, protoSet, *jsonOut, *verbose)
 		return
 	}
 
@@ -47,7 +50,7 @@ func main() {
 		flag.PrintDefaults()
 		fmt.Println("\nexamples:")
 		fmt.Println("  driftnet2 -iface eth0")
-		fmt.Println("  driftnet2 -iface en0 --proto http")
+		fmt.Println("  driftnet2 -iface en0 --proto http,ftp")
 		fmt.Println("  driftnet2 -iface eth0 -output creds.json")
 		fmt.Println("  driftnet2 -iface eth0 -w capture.pcap")
 		fmt.Println("  driftnet2 -pcap capture.pcap --proto http,dns")
@@ -67,34 +70,49 @@ func main() {
 		}
 	}
 
-	fmt.Printf("[*] interface: %-8s  mode: %-10s  proto: %s\n\n", *iface, mode, *protocols)
+	fmt.Printf("[*] interface: %-8s  mode: %-10s  proto: %s\n", *iface, mode, *protocols)
+	if *pcapWrite != "" {
+		fmt.Printf("[*] pcap write: %s\n", *pcapWrite)
+	}
+	fmt.Println()
 
-	var s interface {
+	var sniff interface {
 		Events() <-chan *sniffer.RawPacket
 		Close() error
 	}
 
 	var err error
 	if hasXDP {
-		s, err = sniffer.NewXDPLive(*iface)
+		sniff, err = sniffer.NewXDPLive(*iface)
 		if err != nil {
 			log.Printf("XDP failed: %v — falling back to AF_PACKET", err)
 			hasXDP = false
 			mode = "AF_PACKET"
-			s, err = sniffer.NewAFPacketSniffer(*iface)
+			sniff, err = sniffer.NewAFPacketSniffer(*iface)
 		}
 	}
 	if !hasXDP {
-		s, err = sniffer.NewAFPacketSniffer(*iface)
+		sniff, err = sniffer.NewAFPacketSniffer(*iface)
 	}
 	if err != nil {
 		log.Fatalf("sniffer: %v", err)
 	}
-	defer s.Close()
+	defer sniff.Close()
+
+	var pcapW *sniffer.PCAPWriter
+	if *pcapWrite != "" {
+		pcapW, err = sniffer.NewPCAPWriter(*pcapWrite)
+		if err != nil {
+			log.Fatalf("pcap writer: %v", err)
+		}
+		defer pcapW.Close()
+	}
 
 	tui := output.NewTerminalUI(*iface, mode)
 
+	var mu sync.Mutex
 	var allCreds []protocol.Credential
+	seen := make(map[string]bool)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -102,25 +120,29 @@ func main() {
 	tui.PrintHeader()
 
 	go func() {
-		defer func() {
-			if *jsonOut != "" {
-				if err := output.WriteJSON(allCreds, *jsonOut); err != nil {
-					log.Printf("json: %v", err)
-				}
-				fmt.Printf("\n[*] saved %d credentials → %s\n", len(allCreds), *jsonOut)
+		for pkt := range sniff.Events() {
+			if pcapW != nil {
+				pcapW.WritePacket(pkt)
 			}
-		}()
 
-		for pkt := range s.Events() {
 			if len(pkt.Payload) == 0 {
 				continue
 			}
 
 			creds := dispatchProtocol(pkt, protoSet)
 			for _, c := range creds {
+				key := dedupKey(c)
+				mu.Lock()
+				if seen[key] {
+					mu.Unlock()
+					continue
+				}
+				seen[key] = true
+				allCreds = append(allCreds, c)
+				mu.Unlock()
+
 				tui.AddCredential(c)
 				tui.PrintCredential(c)
-				allCreds = append(allCreds, c)
 			}
 		}
 	}()
@@ -128,9 +150,21 @@ func main() {
 	<-sigCh
 	tui.PrintFooter()
 	fmt.Println("\n[*] shutting down...")
+
+	mu.Lock()
+	finalCreds := make([]protocol.Credential, len(allCreds))
+	copy(finalCreds, allCreds)
+	mu.Unlock()
+
+	if *jsonOut != "" {
+		if err := output.WriteJSON(finalCreds, *jsonOut); err != nil {
+			log.Printf("json: %v", err)
+		}
+		fmt.Printf("[*] saved %d credentials → %s\n", len(finalCreds), *jsonOut)
+	}
 }
 
-func runOffline(filename string, protoSet map[string]bool, jsonOut string) {
+func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbose bool) {
 	fmt.Printf("[*] offline mode: %s\n", filename)
 
 	s, err := sniffer.NewPCAPSniffer(filename)
@@ -140,19 +174,27 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string) {
 	defer s.Close()
 
 	var allCreds []protocol.Credential
+	seen := make(map[string]bool)
+	pktCount := 0
 
 	for pkt := range s.Events() {
+		pktCount++
 		if len(pkt.Payload) == 0 {
 			continue
 		}
 		creds := dispatchProtocol(pkt, protoSet)
-		allCreds = append(allCreds, creds...)
 		for _, c := range creds {
+			key := dedupKey(c)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			allCreds = append(allCreds, c)
 			fmt.Printf("[%s] %s %s:%s → %s\n", c.Protocol, c.Type, c.SrcIP, c.DstIP, c.String())
 		}
 	}
 
-	fmt.Printf("\n[*] found %d credentials in %s\n", len(allCreds), filename)
+	fmt.Printf("\n[*] %d packets processed, %d unique credentials found in %s\n", pktCount, len(allCreds), filename)
 
 	if jsonOut != "" {
 		output.WriteJSON(allCreds, jsonOut)
@@ -161,21 +203,44 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string) {
 }
 
 func dispatchProtocol(pkt *sniffer.RawPacket, protoSet map[string]bool) []protocol.Credential {
-	isDNSPort := pkt.DstPort == 53 || pkt.SrcPort == 53
-	isSMBPort := pkt.DstPort == 445 || pkt.SrcPort == 445
-	isLDAPPort := pkt.DstPort == 389 || pkt.SrcPort == 389
+	srcPort := pkt.SrcPort
+	dstPort := pkt.DstPort
 
 	switch {
-	case isDNSPort && protoSet["dns"]:
+	case (dstPort == 53 || srcPort == 53) && protoSet["dns"]:
 		return protocol.ParseDNS(pkt.Payload, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
-	case isSMBPort && protoSet["smb"]:
+
+	case (dstPort == 445 || srcPort == 445) && protoSet["smb"]:
 		return protocol.ParseSMB(pkt.Payload, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
-	case isLDAPPort && protoSet["ldap"]:
+
+	case (dstPort == 389 || srcPort == 389) && protoSet["ldap"]:
 		return protocol.ParseLDAP(pkt.Payload, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
+
+	case (dstPort == 21 || srcPort == 21) && protoSet["ftp"]:
+		return protocol.ParseFTP(pkt.Payload, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
+
+	case (dstPort == 23 || srcPort == 23) && protoSet["telnet"]:
+		return protocol.ParseTelnet(pkt.Payload, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
+
+	case (dstPort == 110 || srcPort == 110) && protoSet["pop3"]:
+		return protocol.ParsePOP3(pkt.Payload, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
+
+	case (dstPort == 143 || srcPort == 143) && protoSet["imap"]:
+		return protocol.ParseIMAP(pkt.Payload, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
+
+	case (dstPort == 25 || srcPort == 25 || dstPort == 587 || srcPort == 587) && protoSet["smtp"]:
+		return protocol.ParseSMTP(pkt.Payload, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
+
 	case protoSet["http"]:
 		return protocol.ParseHTTP(pkt.Payload, pkt.SrcIP, pkt.DstIP, pkt.DstPort)
 	}
 	return nil
+}
+
+func dedupKey(c protocol.Credential) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
+		c.Protocol, c.Type, c.SrcIP, c.DstIP,
+		c.Username, c.Password, c.Token)
 }
 
 func parseProtoSet(protoStr string) map[string]bool {

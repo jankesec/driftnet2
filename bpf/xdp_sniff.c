@@ -10,11 +10,17 @@
 #include <bpf/bpf_helpers.h>
 
 #define MAX_PACKET_SIZE 1500
-#define TARGET_PORT_HTTP  80
-#define TARGET_PORT_HTTPS 443
-#define TARGET_PORT_DNS   53
-#define TARGET_PORT_SMB   445
-#define TARGET_PORT_LDAP  389
+#define TARGET_PORT_HTTP    80
+#define TARGET_PORT_HTTPS   443
+#define TARGET_PORT_DNS     53
+#define TARGET_PORT_SMB     445
+#define TARGET_PORT_LDAP    389
+#define TARGET_PORT_FTP     21
+#define TARGET_PORT_TELNET  23
+#define TARGET_PORT_SMTP    25
+#define TARGET_PORT_POP3    110
+#define TARGET_PORT_IMAP    143
+#define TARGET_PORT_SMTP_S  587
 
 struct packet_event {
     __u32 src_ip;
@@ -33,9 +39,12 @@ struct {
 } packets SEC(".maps");
 
 static __always_inline int is_target_port(__u16 port) {
-    return port == TARGET_PORT_HTTP  || port == TARGET_PORT_HTTPS ||
-           port == TARGET_PORT_DNS   || port == TARGET_PORT_SMB ||
-           port == TARGET_PORT_LDAP;
+    return port == TARGET_PORT_HTTP    || port == TARGET_PORT_HTTPS  ||
+           port == TARGET_PORT_DNS     || port == TARGET_PORT_SMB    ||
+           port == TARGET_PORT_LDAP    || port == TARGET_PORT_FTP    ||
+           port == TARGET_PORT_TELNET  || port == TARGET_PORT_SMTP   ||
+           port == TARGET_PORT_POP3    || port == TARGET_PORT_IMAP   ||
+           port == TARGET_PORT_SMTP_S;
 }
 
 static __always_inline __u16 parse_tcp_flags(struct tcphdr *tcp) {

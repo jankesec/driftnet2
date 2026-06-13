@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"unsafe"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -148,6 +147,3 @@ func (x *XDPSniffer) Close() error {
 	return nil
 }
 
-func unsafeBytes(ptr unsafe.Pointer, length int) []byte {
-	return unsafe.Slice((*byte)(ptr), length)
-}
