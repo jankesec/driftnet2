@@ -15,12 +15,12 @@ type AFPacketSniffer struct {
 }
 
 type RawPacket struct {
-	SrcIP      string
-	DstIP      string
-	SrcPort    uint16
-	DstPort    uint16
-	Protocol   uint8
-	Payload    []byte
+	SrcIP    string
+	DstIP    string
+	SrcPort  uint16
+	DstPort  uint16
+	Protocol uint8
+	Payload  []byte
 }
 
 func NewAFPacketSniffer(iface string) (*AFPacketSniffer, error) {
@@ -33,6 +33,18 @@ func NewAFPacketSniffer(iface string) (*AFPacketSniffer, error) {
 	if err := handle.SetBPFFilter(filter); err != nil {
 		handle.Close()
 		return nil, fmt.Errorf("bpf filter: %w", err)
+	}
+
+	return &AFPacketSniffer{
+		handle: handle,
+		stopCh: make(chan struct{}),
+	}, nil
+}
+
+func NewPCAPSniffer(filename string) (*AFPacketSniffer, error) {
+	handle, err := pcap.OpenOffline(filename)
+	if err != nil {
+		return nil, fmt.Errorf("pcap offline: %w", err)
 	}
 
 	return &AFPacketSniffer{
@@ -81,8 +93,8 @@ func convertPacket(pkt gopacket.Packet) *RawPacket {
 	ip, _ := ipLayer.(*layers.IPv4)
 
 	rp := &RawPacket{
-		SrcIP:  ip.SrcIP.String(),
-		DstIP:  ip.DstIP.String(),
+		SrcIP: ip.SrcIP.String(),
+		DstIP: ip.DstIP.String(),
 	}
 
 	if tcpLayer := pkt.Layer(layers.LayerTypeTCP); tcpLayer != nil {
@@ -102,18 +114,6 @@ func convertPacket(pkt gopacket.Packet) *RawPacket {
 	}
 
 	return rp
-}
-
-func NewPCAPSniffer(filename string) (*AFPacketSniffer, error) {
-	handle, err := pcap.OpenOffline(filename)
-	if err != nil {
-		return nil, fmt.Errorf("pcap offline: %w", err)
-	}
-
-	return &AFPacketSniffer{
-		handle: handle,
-		stopCh: make(chan struct{}),
-	}, nil
 }
 
 func IsInterfaceValid(iface string) bool {

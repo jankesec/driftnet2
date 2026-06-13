@@ -174,17 +174,118 @@ func ParseDNS(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential 
 }
 
 func ParseSMB(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential {
-	text := string(payload)
-	if strings.Contains(text, "NTLMSSP") {
+	ntlm := extractNTLMFields(payload)
+	if ntlm == nil {
+		return nil
+	}
+
+	hashcatFormat := fmt.Sprintf("%s::%s:%s:%s:%s",
+		ntlm.user, ntlm.domain,
+		ntlm.challenge, ntlm.response,
+		ntlm.ntproof)
+
+	if ntlm.user == "" && ntlm.domain == "" {
 		return []Credential{{
 			Protocol: "SMB",
 			Type:     "NTLM Auth",
 			SrcIP:    srcIP, DstIP: dstIP, DstPort: dstPort,
-			Hash: hexDump(payload, 64),
+			Hash: hashcatFormat,
 			Raw:  "NTLMSSP authentication detected",
 		}}
 	}
-	return nil
+
+	return []Credential{{
+		Protocol: "SMB",
+		Type:     "NTLMv2",
+		SrcIP:    srcIP, DstIP: dstIP, DstPort: dstPort,
+		Username: ntlm.domain + "\\" + ntlm.user,
+		Hash:     hashcatFormat,
+	}}
+}
+
+type ntlmFields struct {
+	domain     string
+	user       string
+	challenge  string
+	response   string
+	ntproof    string
+}
+
+func extractNTLMFields(data []byte) *ntlmFields {
+	text := string(data)
+
+	if !strings.Contains(text, "NTLMSSP") {
+		return nil
+	}
+
+	ntlm := &ntlmFields{}
+
+	ntlmIdx := strings.Index(text, "NTLMSSP")
+	if ntlmIdx < 0 {
+		return ntlm
+	}
+
+	msgType := uint32(0)
+	if len(data) > ntlmIdx+12 {
+		msgType = uint32(data[ntlmIdx+8]) | uint32(data[ntlmIdx+9])<<8 |
+			uint32(data[ntlmIdx+10])<<16 | uint32(data[ntlmIdx+11])<<24
+	}
+
+	if msgType == 3 {
+		ntlm.domain = extractNTLMString(data, ntlmIdx+28)
+		ntlm.user = extractNTLMString(data, ntlmIdx+36)
+		ntlm.ntproof = extractNTLMHex(data, ntlmIdx, 0)
+	}
+
+	if ntlm.domain != "" || ntlm.user != "" {
+		return ntlm
+	}
+
+	for _, line := range strings.Split(text, "\x00") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "\\") && len(line) < 100 && !strings.Contains(line, " ") {
+			parts := strings.SplitN(line, "\\", 2)
+			if len(parts) == 2 && len(parts[0]) < 50 && len(parts[1]) < 50 {
+				ntlm.domain = parts[0]
+				ntlm.user = parts[1]
+				break
+			}
+		}
+	}
+
+	if ntlm.challenge == "" {
+		ntlm.challenge = hexDump(data[ntlmIdx:min(ntlmIdx+40, len(data))], 16)
+	}
+	if ntlm.response == "" {
+		ntlm.response = hexDump(data[ntlmIdx:min(ntlmIdx+200, len(data))], 100)
+	}
+	if ntlm.ntproof == "" {
+		ntlm.ntproof = hexDump(data[ntlmIdx:min(ntlmIdx+50, len(data))], 16)
+	}
+
+	return ntlm
+}
+
+func extractNTLMString(data []byte, offset int) string {
+	if offset+8 > len(data) {
+		return ""
+	}
+	l := int(uint16(data[offset]) | uint16(data[offset+1])<<8)
+	strOff := int(uint32(data[offset+4]) | uint32(data[offset+5])<<8 |
+		uint32(data[offset+6])<<16 | uint32(data[offset+7])<<24)
+
+	if l > 0 && l < 512 && strOff > 0 && strOff+l <= len(data) {
+		raw := data[strOff : strOff+l]
+		return strings.TrimRight(string(raw), "\x00")
+	}
+	return ""
+}
+
+func extractNTLMHex(data []byte, baseOffset, _ int) string {
+	if len(data) < baseOffset+40 {
+		return hexDump(data[baseOffset:], 32)
+	}
+	return hexDump(data[baseOffset:baseOffset+32], 32)
 }
 
 func ParseLDAP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential {
