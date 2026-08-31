@@ -63,7 +63,7 @@ Driftnet2 silently extracts credentials, session tokens, and NTLM hashes from li
 ## Quick Start
 
 ```bash
-git clone https://github.com/byjanke/driftnet2 && cd driftnet2
+git clone https://github.com/jankesec/driftnet2 && cd driftnet2
 go build -o driftnet2 ./cmd/driftnet2
 ```
 
