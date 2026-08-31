@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/byjanke/driftnet2/pkg/protocol"
+	"github.com/jankesec/driftnet2/pkg/protocol"
 )
 
 type jsonOutput struct {

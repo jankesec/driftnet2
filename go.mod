@@ -1,6 +1,6 @@
-module github.com/byjanke/driftnet2
+module github.com/jankesec/driftnet2
 
-go 1.26.1
+go 1.26
 
 require (
 	github.com/cilium/ebpf v0.21.0

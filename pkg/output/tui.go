@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/byjanke/driftnet2/pkg/protocol"
+	"github.com/jankesec/driftnet2/pkg/protocol"
 )
 
 type TerminalUI struct {
