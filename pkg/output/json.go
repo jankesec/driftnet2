@@ -9,15 +9,15 @@ import (
 )
 
 type jsonOutput struct {
-	Metadata    jsonMeta               `json:"metadata"`
-	Credentials []protocol.Credential  `json:"credentials"`
+	Metadata    jsonMeta              `json:"metadata"`
+	Credentials []protocol.Credential `json:"credentials"`
 }
 
 type jsonMeta struct {
-	Tool      string    `json:"tool"`
-	Version   string    `json:"version"`
+	Tool       string    `json:"tool"`
+	Version    string    `json:"version"`
 	ExportedAt time.Time `json:"exported_at"`
-	Count     int       `json:"count"`
+	Count      int       `json:"count"`
 }
 
 func WriteJSON(creds []protocol.Credential, filename string) error {

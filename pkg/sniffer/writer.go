@@ -10,10 +10,6 @@ import (
 	"github.com/google/gopacket/layers"
 )
 
-const (
-	linkTypeRaw = 101
-)
-
 type PCAPWriter struct {
 	f        *os.File
 	linkType layers.LinkType
@@ -36,7 +32,7 @@ func NewPCAPWriter(filename string, linkType layers.LinkType) (*PCAPWriter, erro
 	binary.LittleEndian.PutUint32(hdr[20:], uint32(linkType))
 
 	if _, err := f.Write(hdr); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("write pcap header: %w", err)
 	}
 

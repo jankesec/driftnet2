@@ -101,7 +101,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("sniffer: %v", err)
 	}
-	defer sniff.Close()
+	defer func() { _ = sniff.Close() }()
 
 	var pcapW *sniffer.PCAPWriter
 	if *pcapWrite != "" {
@@ -110,7 +110,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("pcap writer: %v", err)
 		}
-		defer pcapW.Close()
+		defer func() { _ = pcapW.Close() }()
 	}
 
 	tui := output.NewTerminalUI(*iface, mode)
@@ -127,7 +127,9 @@ func main() {
 	go func() {
 		for pkt := range sniff.Events() {
 			if pcapW != nil {
-				pcapW.WritePacket(pkt)
+				if err := pcapW.WritePacket(pkt); err != nil {
+					log.Printf("pcap write: %v", err)
+				}
 			}
 
 			if len(pkt.Payload) == 0 {
@@ -176,7 +178,7 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 	if err != nil {
 		log.Fatalf("pcap: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	var allCreds []protocol.Credential
 	seen := make(map[string]bool)
@@ -206,7 +208,9 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 	fmt.Printf("\n[*] %d packets processed, %d unique credentials found in %s\n", pktCount, len(allCreds), filename)
 
 	if jsonOut != "" {
-		output.WriteJSON(allCreds, jsonOut)
+		if err := output.WriteJSON(allCreds, jsonOut); err != nil {
+			log.Printf("json: %v", err)
+		}
 		fmt.Printf("[*] saved → %s\n", jsonOut)
 	}
 }

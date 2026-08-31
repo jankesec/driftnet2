@@ -34,7 +34,7 @@ func TestPCAPWriterRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	var got []*RawPacket
 	for p := range s.Events() { // drains to EOF, lets the reader goroutine exit

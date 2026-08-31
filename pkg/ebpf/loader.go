@@ -78,8 +78,8 @@ func NewXDPSniffer(iface, objPath string) (*XDPSniffer, error) {
 
 	netIface, err := net.InterfaceByName(iface)
 	if err != nil {
-		objs.Program.Close()
-		objs.Packets.Close()
+		_ = objs.Program.Close()
+		_ = objs.Packets.Close()
 		return nil, fmt.Errorf("get interface %s: %w", iface, err)
 	}
 
@@ -88,16 +88,16 @@ func NewXDPSniffer(iface, objPath string) (*XDPSniffer, error) {
 		Interface: netIface.Index,
 	})
 	if err != nil {
-		objs.Program.Close()
-		objs.Packets.Close()
+		_ = objs.Program.Close()
+		_ = objs.Packets.Close()
 		return nil, fmt.Errorf("attach XDP: %w", err)
 	}
 
 	rd, err := ringbuf.NewReader(objs.Packets)
 	if err != nil {
-		l.Close()
-		objs.Program.Close()
-		objs.Packets.Close()
+		_ = l.Close()
+		_ = objs.Program.Close()
+		_ = objs.Packets.Close()
 		return nil, fmt.Errorf("ringbuf reader: %w", err)
 	}
 
@@ -147,14 +147,14 @@ func (x *XDPSniffer) Events() <-chan *PacketEvent {
 func (x *XDPSniffer) Close() error {
 	close(x.stopCh)
 	if x.reader != nil {
-		x.reader.Close()
+		_ = x.reader.Close()
 	}
 	if x.link != nil {
-		x.link.Close()
+		_ = x.link.Close()
 	}
 	if x.objs != nil {
-		x.objs.Program.Close()
-		x.objs.Packets.Close()
+		_ = x.objs.Program.Close()
+		_ = x.objs.Packets.Close()
 	}
 	return nil
 }
