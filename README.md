@@ -2,6 +2,7 @@
 
 **Kernel-level network sniffer & credential extractor — 8 protocols, eBPF XDP stealth, zero EDR footprint.**
 
+[![CI](https://github.com/jankesec/driftnet2/actions/workflows/ci.yml/badge.svg)](https://github.com/jankesec/driftnet2/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go)](https://go.dev)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Protocols](https://img.shields.io/badge/protocols-8-green)]()
