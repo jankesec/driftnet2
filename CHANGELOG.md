@@ -6,6 +6,8 @@ to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-01
+
 Portfolio-quality overhaul — engineering foundation, documentation, and a
 defensive audit mode.
 
@@ -38,6 +40,9 @@ defensive audit mode.
   directory; anchored to `/driftnet2`.
 - Removed a provably-dead Telnet guard (`strings.ContainsAny` over invalid
   UTF-8) and a dead DNS parse offset; checked previously-ignored errors.
+- eBPF/XDP source now compiles in CI: added missing includes (`<linux/in.h>`
+  for `IPPROTO_*`, `<bpf/bpf_endian.h>` for `__bpf_ntohs`) and replaced a
+  non-constant `__builtin_memcpy` with `bpf_probe_read_kernel`.
 
 ## [1.0.0] - 2026-06-13
 
@@ -46,5 +51,6 @@ defensive audit mode.
   cleartext protocol parsers (HTTP, DNS, SMB, LDAP, FTP, Telnet, POP3, IMAP,
   SMTP), DNS-tunnel heuristics, and TUI / JSON / PCAP output.
 
-[Unreleased]: https://github.com/jankesec/driftnet2/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/jankesec/driftnet2/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jankesec/driftnet2/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jankesec/driftnet2/releases/tag/v1.0.0
