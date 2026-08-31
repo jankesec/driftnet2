@@ -18,7 +18,8 @@ captured** network traffic. On Linux it can capture **in-kernel via eBPF/XDP**,
 which runs ahead of userspace pcap-based tooling; on macOS/BSD (and as a Linux
 fallback) it uses **AF_PACKET/libpcap**. It parses **9 cleartext protocols** —
 HTTP, DNS, SMB, LDAP, FTP, Telnet, POP3, IMAP, SMTP — and flags likely DNS
-tunnels in real time.
+tunnels in real time. A defensive [`-audit` mode](#blue-team-exposure-audit)
+turns those findings into a prioritized, remediation-oriented report.
 
 > Note on "stealth": in-kernel XDP capture reduces the footprint seen by
 > userspace pcap-based tools, but it is **not** an invisibility guarantee
@@ -208,6 +209,40 @@ sudo ./driftnet2 -iface eth0 --proto dns -v
 
 ---
 
+## Blue Team: Exposure Audit
+
+Add `-audit` to any run (live or offline) to get a prioritized report of the
+cleartext credential exposure observed — severity and remediation instead of a
+raw credential dump. `-audit-output report.json` also writes it as JSON.
+
+```bash
+./driftnet2 -pcap examples/demo.pcap -audit
+```
+
+```
+Credential Exposure Audit
+=========================
+4 findings — 3 High, 1 Low
+
+[HIGH] FTP — Cleartext password (1)
+  Endpoints: 192.0.2.10 -> 198.51.100.20
+  Fix: Disable plaintext FTP; use FTPS or SFTP.
+
+[HIGH] HTTP — Cleartext password (1)
+  Endpoints: 192.0.2.11 -> 198.51.100.21
+  Fix: Enforce HTTPS/HSTS; never send Basic auth, form credentials, or tokens over cleartext HTTP.
+
+[HIGH] POP3 — Cleartext password (1)
+  Endpoints: 192.0.2.12 -> 198.51.100.22
+  Fix: Enforce TLS (POP3S or STARTTLS) and disable cleartext authentication.
+...
+```
+
+Severity is derived from what was captured (cleartext password / hash → High,
+session token / DNS-tunnel indicator → Medium), grouped by protocol and endpoint.
+
+---
+
 ## Comparison
 
 | | driftnet2 | bettercap | net-creds | pcredz | tshark |
@@ -240,6 +275,7 @@ driftnet2/
 │   ├── ebpf/loader.go         cilium/ebpf loader + ring buffer
 │   ├── sniffer/               live/offline capture + PCAP writer (+ tests)
 │   ├── protocol/protocol.go   9 protocol parsers (+ tests)
+│   ├── audit/                 credential-exposure audit report (+ tests)
 │   └── output/                terminal dashboard + JSON export (+ tests)
 ├── examples/                  reproducible demo generator + sample PCAP
 ├── .github/workflows/ci.yml   build/test/lint/gosec + eBPF compile

@@ -10,6 +10,9 @@ Portfolio-quality overhaul — engineering foundation, documentation, and a
 defensive audit mode.
 
 ### Added
+- **Credential exposure audit mode** (`-audit`, `-audit-output`): a defensive
+  report that groups captured credentials by protocol, assigns a severity, and
+  suggests remediation (`pkg/audit`).
 - Continuous integration (GitHub Actions): build + `go vet` + `-race` tests on a
   Linux/macOS matrix, golangci-lint, gosec, and a Linux eBPF-object compile job.
 - `LICENSE` (MIT).
