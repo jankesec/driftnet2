@@ -49,11 +49,11 @@ func isIPv4(b [16]byte) bool {
 }
 
 type XDPSniffer struct {
-	iface   string
-	objs    *xdpObjects
-	link    link.Link
-	reader  *ringbuf.Reader
-	stopCh  chan struct{}
+	iface  string
+	objs   *xdpObjects
+	link   link.Link
+	reader *ringbuf.Reader
+	stopCh chan struct{}
 }
 
 type xdpObjects struct {
@@ -61,12 +61,12 @@ type xdpObjects struct {
 	Packets *ebpf.Map     `ebpf:"packets"`
 }
 
-func NewXDPSniffer(iface string) (*XDPSniffer, error) {
-	if _, err := os.Stat("bpf/xdp_sniff.o"); os.IsNotExist(err) {
-		return nil, fmt.Errorf("bpf/xdp_sniff.o not found — run 'make bpf' first")
+func NewXDPSniffer(iface, objPath string) (*XDPSniffer, error) {
+	if _, err := os.Stat(objPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("%s not found — run 'make bpf' first", objPath)
 	}
 
-	spec, err := ebpf.LoadCollectionSpec("bpf/xdp_sniff.o")
+	spec, err := ebpf.LoadCollectionSpec(objPath)
 	if err != nil {
 		return nil, fmt.Errorf("load spec: %w", err)
 	}
@@ -158,4 +158,3 @@ func (x *XDPSniffer) Close() error {
 	}
 	return nil
 }
-

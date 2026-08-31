@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ func main() {
 	pcapRead := flag.String("pcap", "", "read from PCAP file (offline mode)")
 	pcapWrite := flag.String("w", "", "write captured packets to PCAP file")
 	verbose := flag.Bool("v", false, "verbose output (show all protocol events)")
+	bpfPath := flag.String("bpf", "", "path to compiled eBPF object (default: auto-detect)")
 	flag.Parse()
 
 	fmt.Print(banner)
@@ -63,10 +65,12 @@ func main() {
 
 	mode := "AF_PACKET"
 	hasXDP := false
+	bpfObj := ""
 	if runtime.GOOS == "linux" {
-		if _, err := os.Stat("bpf/xdp_sniff.o"); err == nil {
+		if p, ok := resolveBPFObject(*bpfPath); ok {
 			mode = "XDP"
 			hasXDP = true
+			bpfObj = p
 		}
 	}
 
@@ -83,7 +87,7 @@ func main() {
 
 	var err error
 	if hasXDP {
-		sniff, err = sniffer.NewXDPLive(*iface)
+		sniff, err = sniffer.NewXDPLive(*iface, bpfObj)
 		if err != nil {
 			log.Printf("XDP failed: %v — falling back to AF_PACKET", err)
 			hasXDP = false
@@ -254,4 +258,27 @@ func parseProtoSet(protoStr string) map[string]bool {
 		s[strings.TrimSpace(strings.ToLower(p))] = true
 	}
 	return s
+}
+
+// resolveBPFObject locates the compiled XDP object independent of the current
+// working directory. Order: explicit flag, DRIFTNET2_BPF env, next to the
+// executable, then ./bpf/xdp_sniff.o as a last resort.
+func resolveBPFObject(flagPath string) (string, bool) {
+	var candidates []string
+	if flagPath != "" {
+		candidates = append(candidates, flagPath)
+	}
+	if env := os.Getenv("DRIFTNET2_BPF"); env != "" {
+		candidates = append(candidates, env)
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "bpf", "xdp_sniff.o"))
+	}
+	candidates = append(candidates, filepath.Join("bpf", "xdp_sniff.o"))
+	for _, c := range candidates {
+		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+			return c, true
+		}
+	}
+	return "", false
 }

@@ -12,8 +12,8 @@ type xdpWrapper struct {
 	ch  chan *RawPacket
 }
 
-func NewXDPLive(iface string) (*xdpWrapper, error) {
-	xdp, err := ebpf.NewXDPSniffer(iface)
+func NewXDPLive(iface, objPath string) (*xdpWrapper, error) {
+	xdp, err := ebpf.NewXDPSniffer(iface, objPath)
 	if err != nil {
 		return nil, fmt.Errorf("xdp: %w", err)
 	}
