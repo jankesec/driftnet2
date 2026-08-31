@@ -59,8 +59,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install clang/llvm and libbpf headers
-        run: sudo apt-get update && sudo apt-get install -y clang llvm libbpf-dev
+      - name: Install clang/llvm and kernel/libbpf headers
+        run: sudo apt-get update && sudo apt-get install -y clang llvm libbpf-dev linux-libc-dev
       - name: Compile eBPF object
         run: make bpf
       - name: Assert object exists
