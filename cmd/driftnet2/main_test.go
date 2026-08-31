@@ -53,3 +53,22 @@ func TestResolveBPFObjectMissing(t *testing.T) {
 		t.Fatalf("missing object should not resolve, got %q", got)
 	}
 }
+
+func TestParseProtoSetSubset(t *testing.T) {
+	got := parseProtoSet("http,dns,smb")
+	for _, p := range []string{"http", "dns", "smb"} {
+		if !got[p] {
+			t.Errorf("expected %q in set", p)
+		}
+	}
+	if got["ftp"] {
+		t.Errorf("did not expect ftp in set")
+	}
+}
+
+func TestParseProtoSetTrimAndLower(t *testing.T) {
+	got := parseProtoSet(" HTTP , DnS ")
+	if !got["http"] || !got["dns"] {
+		t.Errorf("expected normalized http/dns, got %v", got)
+	}
+}
