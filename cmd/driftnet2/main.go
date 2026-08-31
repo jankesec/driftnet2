@@ -280,6 +280,7 @@ func resolveBPFObject(flagPath string) (string, bool) {
 	}
 	candidates = append(candidates, filepath.Join("bpf", "xdp_sniff.o"))
 	for _, c := range candidates {
+		// #nosec G703 -- candidate paths are operator-provided (flag/env); local CLI tool
 		if info, err := os.Stat(c); err == nil && !info.IsDir() {
 			return c, true
 		}
