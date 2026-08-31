@@ -1,2 +1,3 @@
-driftnet2
+/driftnet2
 bpf/*.o
+coverage.out

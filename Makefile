@@ -1,15 +1,16 @@
-.PHONY: all bpf build clean
+.PHONY: all bpf build build-macos clean deps test test-race vet lint fmt cover sec
 
-BPF_SRC = bpf/xdp_sniff.c
-BPF_OUT = bpf/xdp_sniff.o
-GO_BIN  = driftnet2
+BPF_SRC  = bpf/xdp_sniff.c
+BPF_OUT  = bpf/xdp_sniff.o
+GO_BIN   = driftnet2
+# Multiarch include dir where linux-libc-dev ships <asm/types.h> (Debian/Ubuntu).
+BPF_ARCH ?= $(shell uname -m)
 
 all: bpf build
 
 bpf:
-	@echo "[*] compiling eBPF XDP program..."
-	clang -O2 -target bpf -c $(BPF_SRC) -o $(BPF_OUT) -I/usr/include/x86_64-linux-gnu 2>/dev/null || \
-	clang -O2 -target bpf -c $(BPF_SRC) -o $(BPF_OUT)
+	@echo "[*] compiling eBPF XDP program (arch: $(BPF_ARCH))..."
+	clang -O2 -g -target bpf -I/usr/include/$(BPF_ARCH)-linux-gnu -c $(BPF_SRC) -o $(BPF_OUT)
 
 build:
 	@echo "[*] building Go binary..."
@@ -25,3 +26,29 @@ clean:
 deps:
 	@echo "[*] installing Go dependencies..."
 	go mod tidy
+
+test:
+	go test ./...
+
+test-race:
+	go test -race ./...
+
+vet:
+	go vet ./...
+
+lint:
+	golangci-lint run ./...
+
+fmt:
+	gofmt -s -w .
+
+cover:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
+
+# G115 is excluded: every int -> uint16/uint32 conversion in pkg/sniffer
+# serializes into a fixed-width on-wire field (pcap record header, IP/UDP
+# length fields) whose width is defined by the wire format itself.
+# G304/G703 (operator-provided file paths) are justified inline via #nosec.
+sec:
+	gosec -exclude=G115 ./...

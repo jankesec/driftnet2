@@ -6,14 +6,16 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 
-	"github.com/byjanke/driftnet2/pkg/output"
-	"github.com/byjanke/driftnet2/pkg/protocol"
-	"github.com/byjanke/driftnet2/pkg/sniffer"
+	"github.com/jankesec/driftnet2/pkg/audit"
+	"github.com/jankesec/driftnet2/pkg/output"
+	"github.com/jankesec/driftnet2/pkg/protocol"
+	"github.com/jankesec/driftnet2/pkg/sniffer"
 )
 
 const banner = `
@@ -33,6 +35,9 @@ func main() {
 	pcapRead := flag.String("pcap", "", "read from PCAP file (offline mode)")
 	pcapWrite := flag.String("w", "", "write captured packets to PCAP file")
 	verbose := flag.Bool("v", false, "verbose output (show all protocol events)")
+	bpfPath := flag.String("bpf", "", "path to compiled eBPF object (default: auto-detect)")
+	audit := flag.Bool("audit", false, "print a credential exposure audit report at the end")
+	auditOut := flag.String("audit-output", "", "write the audit report as JSON to a file")
 	flag.Parse()
 
 	fmt.Print(banner)
@@ -40,7 +45,7 @@ func main() {
 	protoSet := parseProtoSet(*protocols)
 
 	if *pcapRead != "" {
-		runOffline(*pcapRead, protoSet, *jsonOut, *verbose)
+		runOffline(*pcapRead, protoSet, *jsonOut, *verbose, *audit, *auditOut)
 		return
 	}
 
@@ -63,10 +68,12 @@ func main() {
 
 	mode := "AF_PACKET"
 	hasXDP := false
+	bpfObj := ""
 	if runtime.GOOS == "linux" {
-		if _, err := os.Stat("bpf/xdp_sniff.o"); err == nil {
+		if p, ok := resolveBPFObject(*bpfPath); ok {
 			mode = "XDP"
 			hasXDP = true
+			bpfObj = p
 		}
 	}
 
@@ -83,7 +90,7 @@ func main() {
 
 	var err error
 	if hasXDP {
-		sniff, err = sniffer.NewXDPLive(*iface)
+		sniff, err = sniffer.NewXDPLive(*iface, bpfObj)
 		if err != nil {
 			log.Printf("XDP failed: %v — falling back to AF_PACKET", err)
 			hasXDP = false
@@ -97,7 +104,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("sniffer: %v", err)
 	}
-	defer sniff.Close()
+	defer func() { _ = sniff.Close() }()
 
 	var pcapW *sniffer.PCAPWriter
 	if *pcapWrite != "" {
@@ -106,7 +113,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("pcap writer: %v", err)
 		}
-		defer pcapW.Close()
+		defer func() { _ = pcapW.Close() }()
 	}
 
 	tui := output.NewTerminalUI(*iface, mode)
@@ -123,7 +130,9 @@ func main() {
 	go func() {
 		for pkt := range sniff.Events() {
 			if pcapW != nil {
-				pcapW.WritePacket(pkt)
+				if err := pcapW.WritePacket(pkt); err != nil {
+					log.Printf("pcap write: %v", err)
+				}
 			}
 
 			if len(pkt.Payload) == 0 {
@@ -163,16 +172,20 @@ func main() {
 		}
 		fmt.Printf("[*] saved %d credentials → %s\n", len(finalCreds), *jsonOut)
 	}
+
+	if *audit {
+		emitAudit(finalCreds, *auditOut)
+	}
 }
 
-func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbose bool) {
+func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbose, audit bool, auditOut string) {
 	fmt.Printf("[*] offline mode: %s\n", filename)
 
 	s, err := sniffer.NewPCAPSniffer(filename)
 	if err != nil {
 		log.Fatalf("pcap: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	var allCreds []protocol.Credential
 	seen := make(map[string]bool)
@@ -202,9 +215,35 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 	fmt.Printf("\n[*] %d packets processed, %d unique credentials found in %s\n", pktCount, len(allCreds), filename)
 
 	if jsonOut != "" {
-		output.WriteJSON(allCreds, jsonOut)
+		if err := output.WriteJSON(allCreds, jsonOut); err != nil {
+			log.Printf("json: %v", err)
+		}
 		fmt.Printf("[*] saved → %s\n", jsonOut)
 	}
+
+	if audit {
+		emitAudit(allCreds, auditOut)
+	}
+}
+
+// emitAudit prints a credential exposure report and optionally writes it as JSON.
+func emitAudit(creds []protocol.Credential, auditOut string) {
+	rep := audit.Analyze(creds)
+	fmt.Println()
+	fmt.Print(rep.Text())
+	if auditOut == "" {
+		return
+	}
+	data, err := rep.JSON()
+	if err != nil {
+		log.Printf("audit json: %v", err)
+		return
+	}
+	if err := os.WriteFile(auditOut, data, 0o600); err != nil {
+		log.Printf("audit output: %v", err)
+		return
+	}
+	fmt.Printf("[*] audit report → %s\n", auditOut)
 }
 
 func dispatchProtocol(pkt *sniffer.RawPacket, protoSet map[string]bool) []protocol.Credential {
@@ -254,4 +293,28 @@ func parseProtoSet(protoStr string) map[string]bool {
 		s[strings.TrimSpace(strings.ToLower(p))] = true
 	}
 	return s
+}
+
+// resolveBPFObject locates the compiled XDP object independent of the current
+// working directory. Order: explicit flag, DRIFTNET2_BPF env, next to the
+// executable, then ./bpf/xdp_sniff.o as a last resort.
+func resolveBPFObject(flagPath string) (string, bool) {
+	var candidates []string
+	if flagPath != "" {
+		candidates = append(candidates, flagPath)
+	}
+	if env := os.Getenv("DRIFTNET2_BPF"); env != "" {
+		candidates = append(candidates, env)
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "bpf", "xdp_sniff.o"))
+	}
+	candidates = append(candidates, filepath.Join("bpf", "xdp_sniff.o"))
+	for _, c := range candidates {
+		// #nosec G703 -- candidate paths are operator-provided (flag/env); local CLI tool
+		if info, err := os.Stat(c); err == nil && !info.IsDir() {
+			return c, true
+		}
+	}
+	return "", false
 }

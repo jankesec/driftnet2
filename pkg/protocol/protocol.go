@@ -223,7 +223,7 @@ func ParseDNS(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential 
 			break
 		}
 		if l&0xC0 == 0xC0 {
-			offset += 2
+			// compression pointer — stop label parsing
 			break
 		}
 		offset++
@@ -263,11 +263,7 @@ func isSuspiciousDNS(qname string, labels []string) bool {
 		}
 	}
 
-	if len(labels) > 6 {
-		return true
-	}
-
-	return false
+	return len(labels) > 6
 }
 
 func shannonEntropy(s string) float64 {
@@ -575,7 +571,7 @@ func ParseTelnet(payload []byte, srcIP, dstIP string, dstPort uint16) []Credenti
 		}
 	}
 
-	if len(cleaned) > 0 && len(cleaned) < 64 && !strings.ContainsAny(cleaned, "\xff\xfe\xfd") {
+	if len(cleaned) > 0 && len(cleaned) < 64 {
 		trimmed := strings.TrimSpace(cleaned)
 		if len(trimmed) > 0 && !strings.Contains(trimmed, " ") {
 			c := newCred("TELNET", "Input", srcIP, dstIP, dstPort)

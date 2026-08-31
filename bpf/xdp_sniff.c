@@ -3,12 +3,14 @@
 // Requires: Linux kernel 5.8+ with CONFIG_XDP_SOCKETS=y
 
 #include <linux/bpf.h>
+#include <linux/in.h>
 #include <linux/if_ether.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
 #include <bpf/bpf_helpers.h>
+#include <bpf/bpf_endian.h>
 
 #define MAX_PACKET_SIZE 1500
 
@@ -114,7 +116,10 @@ static __always_inline int handle_transport(struct packet_event *evt, void *tran
     if (payload_len > 0) {
         void *payload_start = (void *)((long)transport_hdr + (payload_offset - ip_hdr_len));
         if (payload_start + payload_len <= data_end) {
-            __builtin_memcpy(evt->data, payload_start, payload_len);
+            // Variable-length copy: the BPF target rejects __builtin_memcpy with
+            // a non-constant size, so use the probe-read helper. payload_len is
+            // already clamped to sizeof(evt->data) above.
+            bpf_probe_read_kernel(evt->data, (__u32)payload_len, payload_start);
         }
     }
 

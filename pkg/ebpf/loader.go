@@ -49,11 +49,11 @@ func isIPv4(b [16]byte) bool {
 }
 
 type XDPSniffer struct {
-	iface   string
-	objs    *xdpObjects
-	link    link.Link
-	reader  *ringbuf.Reader
-	stopCh  chan struct{}
+	iface  string
+	objs   *xdpObjects
+	link   link.Link
+	reader *ringbuf.Reader
+	stopCh chan struct{}
 }
 
 type xdpObjects struct {
@@ -61,12 +61,12 @@ type xdpObjects struct {
 	Packets *ebpf.Map     `ebpf:"packets"`
 }
 
-func NewXDPSniffer(iface string) (*XDPSniffer, error) {
-	if _, err := os.Stat("bpf/xdp_sniff.o"); os.IsNotExist(err) {
-		return nil, fmt.Errorf("bpf/xdp_sniff.o not found — run 'make bpf' first")
+func NewXDPSniffer(iface, objPath string) (*XDPSniffer, error) {
+	if _, err := os.Stat(objPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("%s not found — run 'make bpf' first", objPath)
 	}
 
-	spec, err := ebpf.LoadCollectionSpec("bpf/xdp_sniff.o")
+	spec, err := ebpf.LoadCollectionSpec(objPath)
 	if err != nil {
 		return nil, fmt.Errorf("load spec: %w", err)
 	}
@@ -78,8 +78,8 @@ func NewXDPSniffer(iface string) (*XDPSniffer, error) {
 
 	netIface, err := net.InterfaceByName(iface)
 	if err != nil {
-		objs.Program.Close()
-		objs.Packets.Close()
+		_ = objs.Program.Close()
+		_ = objs.Packets.Close()
 		return nil, fmt.Errorf("get interface %s: %w", iface, err)
 	}
 
@@ -88,16 +88,16 @@ func NewXDPSniffer(iface string) (*XDPSniffer, error) {
 		Interface: netIface.Index,
 	})
 	if err != nil {
-		objs.Program.Close()
-		objs.Packets.Close()
+		_ = objs.Program.Close()
+		_ = objs.Packets.Close()
 		return nil, fmt.Errorf("attach XDP: %w", err)
 	}
 
 	rd, err := ringbuf.NewReader(objs.Packets)
 	if err != nil {
-		l.Close()
-		objs.Program.Close()
-		objs.Packets.Close()
+		_ = l.Close()
+		_ = objs.Program.Close()
+		_ = objs.Packets.Close()
 		return nil, fmt.Errorf("ringbuf reader: %w", err)
 	}
 
@@ -147,15 +147,14 @@ func (x *XDPSniffer) Events() <-chan *PacketEvent {
 func (x *XDPSniffer) Close() error {
 	close(x.stopCh)
 	if x.reader != nil {
-		x.reader.Close()
+		_ = x.reader.Close()
 	}
 	if x.link != nil {
-		x.link.Close()
+		_ = x.link.Close()
 	}
 	if x.objs != nil {
-		x.objs.Program.Close()
-		x.objs.Packets.Close()
+		_ = x.objs.Program.Close()
+		_ = x.objs.Packets.Close()
 	}
 	return nil
 }
-
