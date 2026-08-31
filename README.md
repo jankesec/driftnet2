@@ -103,8 +103,8 @@ Add `-audit` to turn that into a prioritized, remediation-oriented report →
               │       Go Userspace      │
               │  Protocol parsers (9)   │
               │  → credential model     │
-              │  → TUI / JSON / PCAP     │
-              │  → exposure audit        │
+              │  → TUI / JSON / PCAP    │
+              │  → exposure audit       │
               └─────────────────────────┘
 ```
 
