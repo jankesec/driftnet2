@@ -8,6 +8,7 @@ requests.
 - Preferred: open a private report via GitHub Security Advisories —
   the **Security → Report a vulnerability** button on this repository
   (`https://github.com/jankesec/driftnet2/security/advisories/new`).
+- Alternatively, you can reach out directly to `security@jankesec.com`.
 
 Include enough detail to reproduce (affected version/commit, inputs, and impact).
 You can expect an initial acknowledgement and, once triaged, coordinated
