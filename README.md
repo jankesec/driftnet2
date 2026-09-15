@@ -3,6 +3,9 @@
 # 📡 `driftnet2`
 ### Kernel-Level Network Sniffer, Credential Interceptor & Exposure Auditor
 
+[![GitHub Stars](https://img.shields.io/github/stars/jankesec/driftnet2?style=for-the-badge&color=yellow)](https://github.com/jankesec/driftnet2/stargazers)
+[![GitHub Forks](https://img.shields.io/github/forks/jankesec/driftnet2?style=for-the-badge&color=blue)](https://github.com/jankesec/driftnet2/network/members)
+[![Homebrew Formula](https://img.shields.io/badge/Homebrew-jankesec%2Ftap-blue?style=for-the-badge&logo=homebrew)](https://github.com/jankesec/homebrew-tap)
 [![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![eBPF](https://img.shields.io/badge/eBPF-Linux_5.8+_XDP-FF6600?style=for-the-badge&logo=linux&logoColor=white)](https://ebpf.io)
 [![Protocols](https://img.shields.io/badge/Protocols-9_Engines-00FF66?style=for-the-badge)]()
@@ -137,6 +140,30 @@ Credential Exposure Audit
 ...
 ```
 
+```mermaid
+flowchart TD
+    subgraph KERNEL ["Kernel Space (Linux eBPF / XDP)"]
+        NIC["Network Interface (NIC)"] -->|Raw Ingress Frames| XDP["eBPF XDP Driver Hook\n(Kernel-Level / Zero EDR Footprint)"]
+        XDP -->|L4 Filtered Packets| RING["Perf / BPF Ring Buffer"]
+    end
+
+    subgraph USERSPACE ["Go Userspace Engine"]
+        PCAP["libpcap / AF_PACKET (macOS & BSD)"] -.-> PARSER
+        RING --> PARSER["Multi-Protocol Dissector\n(HTTP, DNS, SMB, LDAP, FTP, Telnet, POP3, IMAP, SMTP)"]
+        PARSER --> REGEX["Credential & Token Extractor\n(Basic, Bearer, NTLMv2, Cookies, Hashes)"]
+        REGEX --> OUT["Output Pipeline"]
+        OUT --> TUI["Terminal TUI Dashboard"]
+        OUT --> JSON["Structured JSON Log"]
+        OUT --> PCAP_W["Filtered PCAP Writer"]
+    end
+
+    style KERNEL fill:#161b22,stroke:#f85149,stroke-width:2px,color:#fff
+    style USERSPACE fill:#161b22,stroke:#58a6ff,stroke-width:2px,color:#fff
+    style XDP fill:#21262d,stroke:#3fb950,color:#fff
+    style PARSER fill:#21262d,stroke:#58a6ff,color:#fff
+    style REGEX fill:#21262d,stroke:#d29922,color:#fff
+```
+
 ---
 
 ## 📡 The 9 Protocol Engines
@@ -212,7 +239,13 @@ Credential Exposure Audit
 
 ## 🚀 Quick Start & Installation
 
-### 1. Build from Source
+### 1. Install via Homebrew (macOS / Linux)
+
+```bash
+brew install jankesec/tap/driftnet2
+```
+
+### 2. Build from Source
 
 ```bash
 # Clone repository
@@ -224,7 +257,7 @@ make build
 go build -ldflags="-s -w" -o driftnet2 ./cmd/driftnet2
 ```
 
-### 2. Linux Kernel eBPF/XDP Compilation (Optional)
+### 3. Linux Kernel eBPF/XDP Compilation (Optional)
 
 On Linux hosts with Clang/LLVM installed, compile the kernel hook:
 
@@ -235,7 +268,7 @@ make bpf    # Compiles bpf/xdp_sniff.c into xdp_sniff.o
 > [!NOTE]
 > Driftnet2 auto-locates `xdp_sniff.o` in the working directory, binary directory, or via `-bpf /path/to/xdp_sniff.o` / `DRIFTNET2_BPF` environment variable. If absent, it automatically uses high-performance `AF_PACKET`.
 
-### 3. Operational Invocations
+### 4. Operational Invocations
 
 ```bash
 # Live sniffing on specific interface with protocol filtering and PCAP logging:
@@ -351,6 +384,14 @@ GitHub          : https://github.com/jankesec
 PGP Fingerprint : FF0A 7D83 6751 CCE3 F9CC F574 FCF8 39FB 7F00 4626
 GPG Key ID      : 5FDB257F4AAE8C3F
 ```
+
+---
+
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=jankesec/driftnet2&type=Date)](https://star-history.com/#jankesec/driftnet2&Date)
+
+If you find **driftnet2** useful for offensive security assessments or network analysis, please consider giving it a ⭐ star!
 
 ---
 

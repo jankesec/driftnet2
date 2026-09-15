@@ -1,3 +1,4 @@
 /driftnet2
 bpf/*.o
 coverage.out
+.DS_Store

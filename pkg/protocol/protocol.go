@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"net/url"
@@ -761,6 +762,449 @@ func ParseSMTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 	}
 
 	return creds
+}
+
+// --- Kerberos ---
+
+func ParseKerberos(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	if len(payload) < 10 {
+		return nil
+	}
+
+	tag := payload[0]
+
+	// AS-REQ: application tag 10 (0x6a)
+	if tag == 0x6a {
+		return parseKerberosASREQ(payload, srcIP, dstIP, dstPort)
+	}
+
+	// AS-REP: application tag 11 (0x6b)
+	if tag == 0x6b {
+		return parseKerberosASREP(payload, srcIP, dstIP, dstPort)
+	}
+
+	// TGS-REQ: application tag 12 (0x6c)
+	if tag == 0x6c {
+		cname := extractKerberosPrincipal(payload)
+		if cname != "" {
+			c := newCred("KERB", "TGS-REQ", srcIP, dstIP, dstPort)
+			c.Username = cname
+			c.Raw = "TGS ticket request"
+			return []Credential{c}
+		}
+	}
+
+	return nil
+}
+
+func parseKerberosASREQ(data []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	cname := extractKerberosPrincipal(data)
+	realm := extractKerberosRealm(data)
+
+	if cname == "" {
+		return nil
+	}
+
+	principal := cname
+	if realm != "" {
+		principal = cname + "@" + realm
+	}
+
+	c := newCred("KERB", "AS-REQ", srcIP, dstIP, dstPort)
+	c.Username = principal
+	c.Raw = "Kerberos pre-authentication request"
+	return []Credential{c}
+}
+
+func parseKerberosASREP(data []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	cname := extractKerberosPrincipal(data)
+	realm := extractKerberosRealm(data)
+
+	principal := cname
+	if realm != "" && cname != "" {
+		principal = cname + "@" + realm
+	}
+
+	c := newCred("KERB", "AS-REP", srcIP, dstIP, dstPort)
+	c.Username = principal
+	// Extract encrypted part for AS-REP roasting
+	if hash := extractKerberosEncData(data); hash != "" {
+		c.Hash = hash
+		c.Type = "AS-REP Roast"
+	}
+	return []Credential{c}
+}
+
+func extractKerberosPrincipal(data []byte) string {
+	// Search for principal name in CNameString (GeneralString)
+	for i := 0; i < len(data)-4; i++ {
+		// Look for context tag [1] containing a SEQUENCE OF GeneralString
+		if data[i] == 0xa1 && i+3 < len(data) {
+			off := i + 2
+			if off < len(data) && data[off] == 0x30 {
+				off += 2
+				if off < len(data) && data[off] == 0x1b {
+					strLen := int(data[off+1])
+					off += 2
+					if off+strLen <= len(data) && strLen > 0 && strLen < 256 {
+						s := string(data[off : off+strLen])
+						if isPrintableASCII(s) && len(s) > 1 {
+							return s
+						}
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func extractKerberosRealm(data []byte) string {
+	// Realm is a GeneralString (0x1b) usually following context tag
+	for i := 0; i < len(data)-3; i++ {
+		if data[i] == 0x1b {
+			strLen := int(data[i+1])
+			if strLen > 0 && strLen < 256 && i+2+strLen <= len(data) {
+				s := string(data[i+2 : i+2+strLen])
+				if isPrintableASCII(s) && strings.ToUpper(s) == s && len(s) > 1 {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func extractKerberosEncData(data []byte) string {
+	if len(data) < 50 {
+		return ""
+	}
+	// Extract last portion as encrypted data hash (for hashcat mode 18200)
+	start := len(data) - min(len(data), 200)
+	return fmt.Sprintf("$krb5asrep$%x", data[start:])
+}
+
+func isPrintableASCII(s string) bool {
+	for _, r := range s {
+		if r < 32 || r > 126 {
+			return false
+		}
+	}
+	return true
+}
+
+// --- MySQL ---
+
+func ParseMySQL(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	if len(payload) < 5 {
+		return nil
+	}
+
+	// MySQL packet: 3-byte length + 1 byte seq + payload
+	pktLen := int(payload[0]) | int(payload[1])<<8 | int(payload[2])<<16
+	seq := payload[3]
+	if pktLen <= 0 || pktLen > len(payload)-4 {
+		return nil
+	}
+
+	body := payload[4:]
+
+	// Server greeting (seq=0, protocol version 10)
+	if seq == 0 && len(body) > 0 && body[0] == 10 {
+		return parseMySQLGreeting(body, srcIP, dstIP, dstPort)
+	}
+
+	// Client auth response (seq=1)
+	if seq == 1 && len(body) > 32 {
+		return parseMySQLAuthResponse(body, srcIP, dstIP, dstPort)
+	}
+
+	return nil
+}
+
+func parseMySQLGreeting(body []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	// Skip protocol version
+	nullIdx := 0
+	for i := 1; i < len(body) && i < 100; i++ {
+		if body[i] == 0 {
+			nullIdx = i
+			break
+		}
+	}
+	if nullIdx == 0 {
+		return nil
+	}
+
+	version := string(body[1:nullIdx])
+	c := newCred("MYSQL", "Server Greeting", srcIP, dstIP, dstPort)
+	c.Raw = "MySQL " + version
+	return []Credential{c}
+}
+
+func parseMySQLAuthResponse(body []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	if len(body) < 36 {
+		return nil
+	}
+
+	// Client capabilities (4 bytes) + max packet (4 bytes) + charset (1 byte) + reserved (23 bytes) = 32
+	offset := 32
+
+	// Username (null-terminated)
+	nullIdx := 0
+	for i := offset; i < len(body); i++ {
+		if body[i] == 0 {
+			nullIdx = i
+			break
+		}
+	}
+	if nullIdx <= offset {
+		return nil
+	}
+
+	username := string(body[offset:nullIdx])
+	offset = nullIdx + 1
+
+	// Auth data
+	if offset >= len(body) {
+		return nil
+	}
+	authLen := int(body[offset])
+	offset++
+	if offset+authLen > len(body) {
+		return nil
+	}
+
+	c := newCred("MYSQL", "Auth Response", srcIP, dstIP, dstPort)
+	c.Username = username
+	if authLen > 0 {
+		c.Hash = fmt.Sprintf("%x", body[offset:offset+authLen])
+	}
+	return []Credential{c}
+}
+
+// --- PostgreSQL ---
+
+func ParsePostgreSQL(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	if len(payload) < 8 {
+		return nil
+	}
+
+	// Startup message: length (4 bytes) + protocol version (4 bytes)
+	msgLen := int(binary.BigEndian.Uint32(payload[0:4]))
+	if msgLen < 8 || msgLen > len(payload) {
+		// Try single-byte message type format
+		return parsePostgreSQLPassword(payload, srcIP, dstIP, dstPort)
+	}
+
+	protoVer := binary.BigEndian.Uint32(payload[4:8])
+
+	// Protocol 3.0 startup
+	if protoVer == 0x00030000 {
+		return parsePostgreSQLStartup(payload[8:msgLen], srcIP, dstIP, dstPort)
+	}
+
+	return nil
+}
+
+func parsePostgreSQLStartup(params []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	kvs := make(map[string]string)
+	i := 0
+	for i < len(params)-1 {
+		keyEnd := i
+		for keyEnd < len(params) && params[keyEnd] != 0 {
+			keyEnd++
+		}
+		if keyEnd >= len(params) {
+			break
+		}
+		key := string(params[i:keyEnd])
+		valStart := keyEnd + 1
+		valEnd := valStart
+		for valEnd < len(params) && params[valEnd] != 0 {
+			valEnd++
+		}
+		if key != "" {
+			kvs[key] = string(params[valStart:valEnd])
+		}
+		i = valEnd + 1
+	}
+
+	user, ok := kvs["user"]
+	if !ok || user == "" {
+		return nil
+	}
+
+	c := newCred("PGSQL", "Startup", srcIP, dstIP, dstPort)
+	c.Username = user
+	if db, ok := kvs["database"]; ok {
+		c.Raw = "database=" + db
+	}
+	return []Credential{c}
+}
+
+func parsePostgreSQLPassword(data []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	if len(data) < 5 {
+		return nil
+	}
+
+	// Password message: type 'p' (0x70) + length (4 bytes) + password
+	if data[0] != 'p' {
+		return nil
+	}
+
+	msgLen := int(binary.BigEndian.Uint32(data[1:5]))
+	if msgLen < 5 || 1+msgLen > len(data) {
+		return nil
+	}
+
+	password := data[5 : 1+msgLen]
+	// Remove trailing null
+	if len(password) > 0 && password[len(password)-1] == 0 {
+		password = password[:len(password)-1]
+	}
+
+	pwStr := string(password)
+
+	c := newCred("PGSQL", "Password", srcIP, dstIP, dstPort)
+
+	// md5 hashed passwords start with "md5"
+	if strings.HasPrefix(pwStr, "md5") && len(pwStr) == 35 {
+		c.Type = "MD5 Auth"
+		c.Hash = pwStr
+	} else {
+		c.Password = pwStr
+	}
+
+	return []Credential{c}
+}
+
+// --- Redis ---
+
+func ParseRedis(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	text := string(payload)
+	var creds []Credential
+
+	lines := strings.Split(text, "\r\n")
+
+	for i, line := range lines {
+		upper := strings.ToUpper(strings.TrimSpace(line))
+
+		// Inline AUTH command
+		if strings.HasPrefix(upper, "AUTH ") {
+			parts := strings.SplitN(strings.TrimSpace(line), " ", 3)
+			c := newCred("REDIS", "Auth", srcIP, dstIP, dstPort)
+			if len(parts) == 3 {
+				c.Username = parts[1]
+				c.Password = parts[2]
+			} else if len(parts) == 2 {
+				c.Password = parts[1]
+			}
+			creds = append(creds, c)
+			continue
+		}
+
+		// RESP protocol: *2\r\n$4\r\nAUTH\r\n$<len>\r\n<password>
+		if line == "*2" || line == "*3" {
+			argc := 2
+			if line == "*3" {
+				argc = 3
+			}
+			args := extractRESPArgs(lines[i+1:], argc)
+			if len(args) >= 2 && strings.ToUpper(args[0]) == "AUTH" {
+				c := newCred("REDIS", "Auth", srcIP, dstIP, dstPort)
+				if len(args) == 3 {
+					c.Username = args[1]
+					c.Password = args[2]
+				} else {
+					c.Password = args[1]
+				}
+				creds = append(creds, c)
+			}
+		}
+	}
+
+	return creds
+}
+
+func extractRESPArgs(lines []string, count int) []string {
+	var args []string
+	i := 0
+	for len(args) < count && i < len(lines) {
+		line := lines[i]
+		if strings.HasPrefix(line, "$") {
+			i++
+			if i < len(lines) {
+				args = append(args, lines[i])
+			}
+		}
+		i++
+	}
+	return args
+}
+
+// --- SNMP ---
+
+func ParseSNMP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential {
+	if len(payload) < 10 {
+		return nil
+	}
+
+	// SNMP: BER SEQUENCE (0x30)
+	if payload[0] != 0x30 {
+		return nil
+	}
+
+	offset := 2
+	if payload[1]&0x80 != 0 {
+		n := int(payload[1] & 0x7f)
+		offset = 2 + n
+	}
+	if offset >= len(payload) {
+		return nil
+	}
+
+	// Version: INTEGER (0x02)
+	if payload[offset] != 0x02 {
+		return nil
+	}
+	verLen := int(payload[offset+1])
+	if offset+2+verLen > len(payload) {
+		return nil
+	}
+	version := 0
+	for i := 0; i < verLen; i++ {
+		version = version<<8 | int(payload[offset+2+i])
+	}
+	offset += 2 + verLen
+
+	// SNMPv1/v2c: community string is OCTET STRING (0x04)
+	if version > 1 {
+		return nil
+	}
+	if offset >= len(payload) || payload[offset] != 0x04 {
+		return nil
+	}
+	commLen := int(payload[offset+1])
+	offset += 2
+	if offset+commLen > len(payload) || commLen == 0 {
+		return nil
+	}
+
+	community := string(payload[offset : offset+commLen])
+
+	if community == "" || !isPrintableASCII(community) {
+		return nil
+	}
+
+	versionStr := "v1"
+	if version == 1 {
+		versionStr = "v2c"
+	}
+
+	c := newCred("SNMP", "Community String", srcIP, dstIP, dstPort)
+	c.Password = community
+	c.Raw = "SNMP " + versionStr
+	return []Credential{c}
 }
 
 // --- helpers ---
