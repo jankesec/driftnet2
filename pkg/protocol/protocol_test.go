@@ -22,6 +22,17 @@ func TestParseHTTPBasicAuth(t *testing.T) {
 	}
 }
 
+func TestParseHTTPAuthorizationHeaderIsCaseInsensitive(t *testing.T) {
+	payload := []byte("GET / HTTP/1.1\r\naUtHoRiZaTiOn: bAsIc YWRtaW46UGFzc3dvcmQxMjM=\r\n\r\n")
+	creds := ParseHTTP(payload, "10.0.0.1", "10.0.0.2", 80)
+	if len(creds) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(creds))
+	}
+	if creds[0].Username != "admin" || creds[0].Password != "Password123" {
+		t.Fatalf("unexpected credential: %+v", creds[0])
+	}
+}
+
 func TestParseHTTPBearerToken(t *testing.T) {
 	payload := []byte("GET /api HTTP/1.1\r\nAuthorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0\r\n\r\n")
 	creds := ParseHTTP(payload, "10.0.0.1", "10.0.0.2", 443)

@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -28,6 +29,11 @@ const banner = `
       kernel-level packet sniffer & credential extractor
 `
 
+var supportedProtocols = map[string]struct{}{
+	"dns": {}, "ftp": {}, "http": {}, "imap": {}, "ldap": {},
+	"pop3": {}, "smb": {}, "smtp": {}, "telnet": {},
+}
+
 func main() {
 	iface := flag.String("iface", "", "network interface (e.g. eth0, en0)")
 	jsonOut := flag.String("output", "", "JSON output file")
@@ -40,9 +46,12 @@ func main() {
 	auditOut := flag.String("audit-output", "", "write the audit report as JSON to a file")
 	flag.Parse()
 
-	fmt.Print(banner)
-
 	protoSet := parseProtoSet(*protocols)
+	if unknown := unknownProtocols(protoSet); len(unknown) > 0 {
+		log.Fatalf("unsupported protocol(s): %s", strings.Join(unknown, ", "))
+	}
+
+	fmt.Print(banner)
 
 	if *pcapRead != "" {
 		runOffline(*pcapRead, protoSet, *jsonOut, *verbose, *audit, *auditOut)
@@ -104,8 +113,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("sniffer: %v", err)
 	}
-	defer func() { _ = sniff.Close() }()
-
 	var pcapW *sniffer.PCAPWriter
 	if *pcapWrite != "" {
 		linkType := sniffer.LinkTypeFromSniffer(sniff)
@@ -118,7 +125,6 @@ func main() {
 
 	tui := output.NewTerminalUI(*iface, mode)
 
-	var mu sync.Mutex
 	var allCreds []protocol.Credential
 	seen := make(map[string]bool)
 
@@ -127,7 +133,10 @@ func main() {
 
 	tui.PrintHeader()
 
+	var processor sync.WaitGroup
+	processor.Add(1)
 	go func() {
+		defer processor.Done()
 		for pkt := range sniff.Events() {
 			if pcapW != nil {
 				if err := pcapW.WritePacket(pkt); err != nil {
@@ -142,14 +151,11 @@ func main() {
 			creds := dispatchProtocol(pkt, protoSet)
 			for _, c := range creds {
 				key := dedupKey(c)
-				mu.Lock()
 				if seen[key] {
-					mu.Unlock()
 					continue
 				}
 				seen[key] = true
 				allCreds = append(allCreds, c)
-				mu.Unlock()
 
 				tui.AddCredential(c)
 				tui.PrintCredential(c)
@@ -158,13 +164,17 @@ func main() {
 	}()
 
 	<-sigCh
+	signal.Stop(sigCh)
+	if err := sniff.Close(); err != nil {
+		log.Printf("sniffer close: %v", err)
+	}
+	processor.Wait()
+
 	tui.PrintFooter()
 	fmt.Println("\n[*] shutting down...")
 
-	mu.Lock()
 	finalCreds := make([]protocol.Credential, len(allCreds))
 	copy(finalCreds, allCreds)
-	mu.Unlock()
 
 	if *jsonOut != "" {
 		if err := output.WriteJSON(finalCreds, *jsonOut); err != nil {
@@ -290,9 +300,22 @@ func dedupKey(c protocol.Credential) string {
 func parseProtoSet(protoStr string) map[string]bool {
 	s := make(map[string]bool)
 	for _, p := range strings.Split(protoStr, ",") {
-		s[strings.TrimSpace(strings.ToLower(p))] = true
+		if normalized := strings.TrimSpace(strings.ToLower(p)); normalized != "" {
+			s[normalized] = true
+		}
 	}
 	return s
+}
+
+func unknownProtocols(protoSet map[string]bool) []string {
+	var unknown []string
+	for proto := range protoSet {
+		if _, ok := supportedProtocols[proto]; !ok {
+			unknown = append(unknown, proto)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
 }
 
 // resolveBPFObject locates the compiled XDP object independent of the current

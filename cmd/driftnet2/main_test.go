@@ -72,3 +72,23 @@ func TestParseProtoSetTrimAndLower(t *testing.T) {
 		t.Errorf("expected normalized http/dns, got %v", got)
 	}
 }
+
+func TestParseProtoSetIgnoresEmptyValues(t *testing.T) {
+	got := parseProtoSet("http, ,dns,")
+	if len(got) != 2 || got[""] {
+		t.Errorf("expected only http and dns, got %v", got)
+	}
+}
+
+func TestUnknownProtocols(t *testing.T) {
+	got := unknownProtocols(parseProtoSet("HTTP, bogus, custom"))
+	want := []string{"bogus", "custom"}
+	if len(got) != len(want) {
+		t.Fatalf("unknown protocols = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("unknown protocols = %v, want %v", got, want)
+		}
+	}
+}

@@ -82,8 +82,10 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 			break
 		}
 
-		if strings.HasPrefix(line, "Authorization: Basic ") {
-			b64 := strings.TrimPrefix(line, "Authorization: Basic ")
+		lineLower := strings.ToLower(line)
+
+		if strings.HasPrefix(lineLower, "authorization: basic ") {
+			b64 := line[len("authorization: basic "):]
 			b64 = strings.TrimSpace(b64)
 			decoded, err := base64.StdEncoding.DecodeString(b64)
 			if err == nil {
@@ -97,15 +99,15 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 			}
 		}
 
-		if strings.HasPrefix(line, "Authorization: Bearer ") {
+		if strings.HasPrefix(lineLower, "authorization: bearer ") {
 			c := newCred("HTTP", "Bearer Token", srcIP, dstIP, dstPort)
-			c.Token = strings.TrimSpace(strings.TrimPrefix(line, "Authorization: Bearer "))
+			c.Token = strings.TrimSpace(line[len("authorization: bearer "):])
 			creds = append(creds, c)
 		}
 
-		if strings.HasPrefix(line, "Authorization: Digest ") {
+		if strings.HasPrefix(lineLower, "authorization: digest ") {
 			c := newCred("HTTP", "Digest Auth", srcIP, dstIP, dstPort)
-			digestStr := strings.TrimPrefix(line, "Authorization: Digest ")
+			digestStr := line[len("authorization: digest "):]
 			c.Raw = digestStr
 			if u := extractDigestField(digestStr, "username"); u != "" {
 				c.Username = u
@@ -116,8 +118,8 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 			creds = append(creds, c)
 		}
 
-		if strings.HasPrefix(line, "Authorization: NTLM ") {
-			b64 := strings.TrimSpace(strings.TrimPrefix(line, "Authorization: NTLM "))
+		if strings.HasPrefix(lineLower, "authorization: ntlm ") {
+			b64 := strings.TrimSpace(line[len("authorization: ntlm "):])
 			decoded, err := base64.StdEncoding.DecodeString(b64)
 			if err == nil {
 				ntlm := extractNTLMFields(decoded)
@@ -148,7 +150,6 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 			}
 		}
 
-		lineLower := strings.ToLower(line)
 		for _, hdr := range []struct{ prefix, name string }{
 			{"x-api-key:", "X-Api-Key"},
 			{"x-auth-token:", "X-Auth-Token"},
