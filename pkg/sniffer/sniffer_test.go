@@ -62,3 +62,13 @@ func TestLinkTypeFromSnifferDefault(t *testing.T) {
 		t.Errorf("default link type = %v, want Raw", got)
 	}
 }
+
+func TestAFPacketSnifferCloseIsIdempotent(t *testing.T) {
+	s := &AFPacketSniffer{stopCh: make(chan struct{})}
+	if err := s.Close(); err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("second close: %v", err)
+	}
+}

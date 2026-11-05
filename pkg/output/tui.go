@@ -2,9 +2,12 @@ package output
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jankesec/driftnet2/internal/buildinfo"
 	"github.com/jankesec/driftnet2/pkg/protocol"
 )
 
@@ -32,8 +35,8 @@ func (t *TerminalUI) AddCredential(c protocol.Credential) {
 func (t *TerminalUI) PrintHeader() {
 	bar := strings.Repeat("─", 80)
 	fmt.Printf("┌%s┐\n", bar)
-	fmt.Printf("│ driftnet2 v2.0  │  %-6s  │  %-4s  │  %-40s  │\n",
-		t.iface, t.mode, time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Printf("│ driftnet2 %-8s │  %-6s  │  %-9s │  %-35s │\n",
+		buildinfo.Version, t.iface, t.mode, time.Now().Format("2006-01-02 15:04:05"))
 	fmt.Printf("├%s┤\n", bar)
 }
 
@@ -71,42 +74,17 @@ func (t *TerminalUI) PrintCredential(c protocol.Credential) {
 	src := fmt.Sprintf("%-39s", c.SrcIP)
 	dst := c.DstIP
 	if c.DstPort > 0 {
-		dst = fmt.Sprintf("%s:%d", dst, c.DstPort)
+		dst = net.JoinHostPort(dst, strconv.Itoa(int(c.DstPort)))
 	}
 
 	fmt.Printf("│ %s %s %s → %s │\n", ts, proto, src, dst)
 
-	switch {
-	case c.Password != "":
-		fmt.Printf("│   %s  %s : %s\n", c.Emoji(), c.Username, c.Password)
-	case c.Token != "":
-		token := c.Token
-		if len(token) > 64 {
-			token = token[:64] + "..."
-		}
-		fmt.Printf("│   %s  %s\n", c.Emoji(), token)
-	case c.Hash != "":
-		hash := c.Hash
-		if len(hash) > 64 {
-			hash = hash[:64] + "..."
-		}
-		if c.Username != "" {
-			fmt.Printf("│   %s  %s  %s\n", c.Emoji(), c.Username, hash)
-		} else {
-			fmt.Printf("│   %s  %s\n", c.Emoji(), hash)
-		}
-	case c.DNSQuery != "":
-		query := c.DNSQuery
-		if len(query) > 64 {
-			query = query[:64] + "..."
-		}
-		fmt.Printf("│   %s  TUNNEL: %s\n", c.Emoji(), query)
-	case c.Raw != "":
-		raw := c.Raw
-		if len(raw) > 64 {
-			raw = raw[:64] + "..."
-		}
-		fmt.Printf("│   %s  %s\n", c.Emoji(), raw)
+	value := c.SafeString()
+	if len(value) > 64 {
+		value = value[:64] + "..."
+	}
+	if value != "" {
+		fmt.Printf("│   %s  %s\n", c.Emoji(), value)
 	}
 }
 

@@ -1,23 +1,33 @@
 Output "docs/demo.gif"
-Set Theme "TokyoNight"
-Set FontSize 13
-Set Width 920
-Set Height 640
-Set Padding 22
-Set WindowBar "Colorful"
+
+Set Shell "zsh"
+Set Theme "Pro"
+Set FontSize 14
+Set Width 1200
+Set Height 840
+Set Padding 20
+Set WindowBar Colorful
 Set BorderRadius 10
+Set LineHeight 1.25
+Set TypingSpeed 28ms
+Set CursorBlink true
 
 Hide
-Type "clear"
+Type "export PS1='%F{cyan}security@workstation%f %F{magenta}~/driftnet2%f %# '; clear"
 Enter
 Show
 
-Type "./driftnet2 -pcap examples/demo.pcap -output creds.json -audit"
-Sleep 0.5s
+Sleep 600ms
+Type "./driftnet2 -pcap examples/demo.pcap -output demo-creds.json -audit"
+Sleep 200ms
 Enter
-Sleep 8.5s
+Sleep 6s
 
-Type "cat creds.json | jq '.credentials[0:2]'"
-Sleep 0.5s
+Type "jq '.credentials[0:2]' demo-creds.json"
+Sleep 200ms
 Enter
-Sleep 4.5s
+Sleep 3.8s
+
+Hide
+Type "rm -f demo-creds.json"
+Enter

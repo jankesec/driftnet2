@@ -4,14 +4,18 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 
+	"github.com/jankesec/driftnet2/internal/buildinfo"
 	"github.com/jankesec/driftnet2/pkg/audit"
 	"github.com/jankesec/driftnet2/pkg/output"
 	"github.com/jankesec/driftnet2/pkg/protocol"
@@ -28,6 +32,11 @@ const banner = `
       kernel-level packet sniffer & credential extractor
 `
 
+var supportedProtocols = map[string]struct{}{
+	"dns": {}, "ftp": {}, "http": {}, "imap": {}, "ldap": {},
+	"pop3": {}, "smb": {}, "smtp": {}, "telnet": {},
+}
+
 func main() {
 	iface := flag.String("iface", "", "network interface (e.g. eth0, en0)")
 	jsonOut := flag.String("output", "", "JSON output file")
@@ -38,11 +47,19 @@ func main() {
 	bpfPath := flag.String("bpf", "", "path to compiled eBPF object (default: auto-detect)")
 	audit := flag.Bool("audit", false, "print a credential exposure audit report at the end")
 	auditOut := flag.String("audit-output", "", "write the audit report as JSON to a file")
+	showVersion := flag.Bool("version", false, "print version and build information")
 	flag.Parse()
-
-	fmt.Print(banner)
+	if *showVersion {
+		fmt.Println(buildinfo.String())
+		return
+	}
 
 	protoSet := parseProtoSet(*protocols)
+	if unknown := unknownProtocols(protoSet); len(unknown) > 0 {
+		log.Fatalf("unsupported protocol(s): %s", strings.Join(unknown, ", "))
+	}
+
+	fmt.Print(banner)
 
 	if *pcapRead != "" {
 		runOffline(*pcapRead, protoSet, *jsonOut, *verbose, *audit, *auditOut)
@@ -66,7 +83,7 @@ func main() {
 		log.Fatalf("interface %s not found", *iface)
 	}
 
-	mode := "AF_PACKET"
+	mode := "PCAP"
 	hasXDP := false
 	bpfObj := ""
 	if runtime.GOOS == "linux" {
@@ -92,10 +109,9 @@ func main() {
 	if hasXDP {
 		sniff, err = sniffer.NewXDPLive(*iface, bpfObj)
 		if err != nil {
-			log.Printf("XDP failed: %v — falling back to AF_PACKET", err)
+			log.Printf("XDP failed: %v — falling back to libpcap", err)
 			hasXDP = false
-			mode = "AF_PACKET"
-			sniff, err = sniffer.NewAFPacketSniffer(*iface)
+			mode = "PCAP"
 		}
 	}
 	if !hasXDP {
@@ -104,8 +120,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("sniffer: %v", err)
 	}
-	defer func() { _ = sniff.Close() }()
-
 	var pcapW *sniffer.PCAPWriter
 	if *pcapWrite != "" {
 		linkType := sniffer.LinkTypeFromSniffer(sniff)
@@ -118,7 +132,6 @@ func main() {
 
 	tui := output.NewTerminalUI(*iface, mode)
 
-	var mu sync.Mutex
 	var allCreds []protocol.Credential
 	seen := make(map[string]bool)
 
@@ -127,7 +140,10 @@ func main() {
 
 	tui.PrintHeader()
 
+	var processor sync.WaitGroup
+	processor.Add(1)
 	go func() {
+		defer processor.Done()
 		for pkt := range sniff.Events() {
 			if pcapW != nil {
 				if err := pcapW.WritePacket(pkt); err != nil {
@@ -139,17 +155,14 @@ func main() {
 				continue
 			}
 
-			creds := dispatchProtocol(pkt, protoSet)
+			creds := credentialsFromPacket(pkt, protoSet)
 			for _, c := range creds {
 				key := dedupKey(c)
-				mu.Lock()
 				if seen[key] {
-					mu.Unlock()
 					continue
 				}
 				seen[key] = true
 				allCreds = append(allCreds, c)
-				mu.Unlock()
 
 				tui.AddCredential(c)
 				tui.PrintCredential(c)
@@ -158,19 +171,24 @@ func main() {
 	}()
 
 	<-sigCh
+	signal.Stop(sigCh)
+	if err := sniff.Close(); err != nil {
+		log.Printf("sniffer close: %v", err)
+	}
+	processor.Wait()
+
 	tui.PrintFooter()
 	fmt.Println("\n[*] shutting down...")
 
-	mu.Lock()
 	finalCreds := make([]protocol.Credential, len(allCreds))
 	copy(finalCreds, allCreds)
-	mu.Unlock()
 
 	if *jsonOut != "" {
 		if err := output.WriteJSON(finalCreds, *jsonOut); err != nil {
 			log.Printf("json: %v", err)
+		} else {
+			fmt.Printf("[*] saved %d credentials → %s\n", len(finalCreds), *jsonOut)
 		}
-		fmt.Printf("[*] saved %d credentials → %s\n", len(finalCreds), *jsonOut)
 	}
 
 	if *audit {
@@ -196,7 +214,7 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 		if len(pkt.Payload) == 0 {
 			continue
 		}
-		creds := dispatchProtocol(pkt, protoSet)
+		creds := credentialsFromPacket(pkt, protoSet)
 		for _, c := range creds {
 			key := dedupKey(c)
 			if seen[key] {
@@ -204,7 +222,8 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 			}
 			seen[key] = true
 			allCreds = append(allCreds, c)
-			fmt.Printf("[%s] %s %s:%s → %s\n", c.Protocol, c.Type, c.SrcIP, c.DstIP, c.String())
+			fmt.Printf("[%s] %s %s → %s — %s\n",
+				c.Protocol, c.Type, c.SrcIP, destination(c), c.SafeString())
 		}
 		if verbose && len(creds) == 0 {
 			fmt.Printf("[pkt %d] %s:%d → %s:%d proto=%d len=%d\n",
@@ -217,8 +236,9 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 	if jsonOut != "" {
 		if err := output.WriteJSON(allCreds, jsonOut); err != nil {
 			log.Printf("json: %v", err)
+		} else {
+			fmt.Printf("[*] saved → %s\n", jsonOut)
 		}
-		fmt.Printf("[*] saved → %s\n", jsonOut)
 	}
 
 	if audit {
@@ -239,11 +259,29 @@ func emitAudit(creds []protocol.Credential, auditOut string) {
 		log.Printf("audit json: %v", err)
 		return
 	}
-	if err := os.WriteFile(auditOut, data, 0o600); err != nil {
+	if err := output.WritePrivateFile(auditOut, data); err != nil {
 		log.Printf("audit output: %v", err)
 		return
 	}
 	fmt.Printf("[*] audit report → %s\n", auditOut)
+}
+
+func credentialsFromPacket(pkt *sniffer.RawPacket, protoSet map[string]bool) []protocol.Credential {
+	creds := dispatchProtocol(pkt, protoSet)
+	if pkt.Timestamp.IsZero() {
+		return creds
+	}
+	for i := range creds {
+		creds[i].Timestamp = pkt.Timestamp
+	}
+	return creds
+}
+
+func destination(c protocol.Credential) string {
+	if c.DstPort == 0 {
+		return c.DstIP
+	}
+	return net.JoinHostPort(c.DstIP, strconv.Itoa(int(c.DstPort)))
 }
 
 func dispatchProtocol(pkt *sniffer.RawPacket, protoSet map[string]bool) []protocol.Credential {
@@ -290,9 +328,22 @@ func dedupKey(c protocol.Credential) string {
 func parseProtoSet(protoStr string) map[string]bool {
 	s := make(map[string]bool)
 	for _, p := range strings.Split(protoStr, ",") {
-		s[strings.TrimSpace(strings.ToLower(p))] = true
+		if normalized := strings.TrimSpace(strings.ToLower(p)); normalized != "" {
+			s[normalized] = true
+		}
 	}
 	return s
+}
+
+func unknownProtocols(protoSet map[string]bool) []string {
+	var unknown []string
+	for proto := range protoSet {
+		if _, ok := supportedProtocols[proto]; !ok {
+			unknown = append(unknown, proto)
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
 }
 
 // resolveBPFObject locates the compiled XDP object independent of the current

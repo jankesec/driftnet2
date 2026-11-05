@@ -6,6 +6,42 @@ to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Release-quality runtime, export, documentation, and supply-chain improvements.
+
+### Added
+- Build metadata package and `-version` CLI flag. Release binaries now report
+  their tag, commit, and UTC build time.
+- Regression coverage for mixed-case HTTP authorization headers, protocol flag
+  validation, PCAP timestamp propagation, IPv6 endpoint formatting, atomic
+  export replacement, and idempotent capture shutdown.
+- Architecture, parser, deployment, replay, protocol-example, and threat-model
+  documentation, plus Homebrew installation guidance.
+
+### Changed
+- Rebuilt the terminal demo with the VHS `Pro` theme, a true black background,
+  a larger viewport, and a deterministic cleanup step.
+- Credential and audit JSON files are written through a private `0600`
+  temporary file and atomically renamed into place.
+- Terminal output redacts captured passwords, tokens, hashes, and raw payloads;
+  full evidence remains available only in the private JSON export.
+- Offline findings now show unambiguous `source → destination:port` endpoints
+  and preserve timestamps from the original PCAP packets.
+- HTTP authorization schemes are matched case-insensitively.
+- Live capture shutdown waits for packet processing to finish before producing
+  summaries and exports; repeated close calls are safe.
+- Updated `github.com/cilium/ebpf` to 0.22.0, which fixes the open integer
+  overflow advisory and raises the minimum supported Go version to 1.25.
+- Reworked README architecture and capture-mode descriptions to match the
+  implemented XDP/libpcap behavior and runtime dependencies.
+
+### Fixed
+- Invalid `--proto` values now fail with a clear error instead of silently
+  disabling the mistyped parser.
+- Short token values no longer receive a misleading truncation suffix.
+- XDP payload lengths are bounded before slicing event buffers.
+- Truncated Kerberos, MySQL, PostgreSQL, Redis, and SNMP payloads are rejected
+  without out-of-bounds access or partial authentication records.
+
 ## [1.1.0] - 2026-09-01
 
 Portfolio-quality overhaul — engineering foundation, documentation, and a

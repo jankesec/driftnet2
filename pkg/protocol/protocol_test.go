@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 )
 
@@ -19,6 +20,17 @@ func TestParseHTTPBasicAuth(t *testing.T) {
 	}
 	if creds[0].Protocol != "HTTP" {
 		t.Errorf("protocol: got %q", creds[0].Protocol)
+	}
+}
+
+func TestParseHTTPAuthorizationHeaderIsCaseInsensitive(t *testing.T) {
+	payload := []byte("GET / HTTP/1.1\r\naUtHoRiZaTiOn: bAsIc YWRtaW46UGFzc3dvcmQxMjM=\r\n\r\n")
+	creds := ParseHTTP(payload, "10.0.0.1", "10.0.0.2", 80)
+	if len(creds) != 1 {
+		t.Fatalf("got %d credentials, want 1", len(creds))
+	}
+	if creds[0].Username != "admin" || creds[0].Password != "Password123" {
+		t.Fatalf("unexpected credential: %+v", creds[0])
 	}
 }
 
@@ -263,13 +275,40 @@ func TestCredentialString(t *testing.T) {
 
 	c2 := Credential{Token: "eyJhbGciOiJIUzI1NiJ9"}
 	s := c2.String()
-	if len(s) < 20 {
-		t.Errorf("Token String() too short: %q", s)
+	if s != c2.Token {
+		t.Errorf("short token String() = %q, want %q", s, c2.Token)
+	}
+
+	cLong := Credential{Token: strings.Repeat("x", 41)}
+	if s := cLong.String(); s != strings.Repeat("x", 40)+"..." {
+		t.Errorf("long token String() = %q", s)
 	}
 
 	c3 := Credential{DNSQuery: "tunnel.c2.example.com"}
 	if s := c3.String(); s != "DNS: tunnel.c2.example.com" {
 		t.Errorf("DNS String(): got %q", s)
+	}
+}
+
+func TestCredentialSafeStringRedactsSecrets(t *testing.T) {
+	tests := []struct {
+		name string
+		cred Credential
+		want string
+	}{
+		{name: "password", cred: Credential{Username: "alice", Password: "secret"}, want: "alice:[redacted]"},
+		{name: "password without user", cred: Credential{Password: "secret"}, want: "[redacted password]"},
+		{name: "hash", cred: Credential{Hash: "deadbeef"}, want: "[redacted hash]"},
+		{name: "token", cred: Credential{Token: "token-value"}, want: "[redacted token]"},
+		{name: "raw", cred: Credential{Raw: "sensitive payload"}, want: "[redacted payload]"},
+		{name: "dns indicator", cred: Credential{DNSQuery: "tunnel.example.test"}, want: "DNS: tunnel.example.test"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cred.SafeString(); got != tt.want {
+				t.Fatalf("SafeString() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -288,6 +327,27 @@ func TestCredentialEmoji(t *testing.T) {
 		if got := tt.c.Emoji(); got != tt.want {
 			t.Errorf("Emoji() for %+v: got %q, want %q", tt.c, got, tt.want)
 		}
+	}
+}
+
+func TestExperimentalParsersRejectTruncatedInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		parse func([]byte, string, string, uint16) []Credential
+		data  []byte
+	}{
+		{name: "kerberos", parse: ParseKerberos, data: append([]byte{0x6a, 0x00, 0xa1, 0x01, 0x30}, make([]byte, 5)...)},
+		{name: "mysql", parse: ParseMySQL, data: []byte{0x20, 0x00, 0x00, 0x01, 0x00}},
+		{name: "postgresql", parse: ParsePostgreSQL, data: []byte{'p', 0x00, 0x00, 0x00, 0x20, 'x'}},
+		{name: "redis", parse: ParseRedis, data: []byte("*3\r\n$4\r\nAUTH\r\n$4\r\nuser\r\n")},
+		{name: "snmp", parse: ParseSNMP, data: []byte{0x30, 0x87, 0, 0, 0, 0, 0, 0, 0, 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.parse(tt.data, "192.0.2.1", "198.51.100.1", 0); len(got) != 0 {
+				t.Fatalf("truncated input returned credentials: %+v", got)
+			}
+		})
 	}
 }
 

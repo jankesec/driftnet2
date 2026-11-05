@@ -2,9 +2,9 @@ package output
 
 import (
 	"encoding/json"
-	"os"
 	"time"
 
+	"github.com/jankesec/driftnet2/internal/buildinfo"
 	"github.com/jankesec/driftnet2/pkg/protocol"
 )
 
@@ -24,7 +24,7 @@ func WriteJSON(creds []protocol.Credential, filename string) error {
 	out := jsonOutput{
 		Metadata: jsonMeta{
 			Tool:       "driftnet2",
-			Version:    "2.0",
+			Version:    buildinfo.Version,
 			ExportedAt: time.Now(),
 			Count:      len(creds),
 		},
@@ -36,5 +36,5 @@ func WriteJSON(creds []protocol.Credential, filename string) error {
 		return err
 	}
 
-	return os.WriteFile(filename, data, 0600)
+	return WritePrivateFile(filename, data)
 }

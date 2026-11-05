@@ -3,9 +3,11 @@ package ebpf
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"sync"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
@@ -49,11 +51,13 @@ func isIPv4(b [16]byte) bool {
 }
 
 type XDPSniffer struct {
-	iface  string
-	objs   *xdpObjects
-	link   link.Link
-	reader *ringbuf.Reader
-	stopCh chan struct{}
+	iface     string
+	objs      *xdpObjects
+	link      link.Link
+	reader    *ringbuf.Reader
+	stopCh    chan struct{}
+	closeOnce sync.Once
+	closeErr  error
 }
 
 type xdpObjects struct {
@@ -137,7 +141,11 @@ func (x *XDPSniffer) Events() <-chan *PacketEvent {
 				if err != nil {
 					return
 				}
-				ch <- evt
+				select {
+				case ch <- evt:
+				case <-x.stopCh:
+					return
+				}
 			}
 		}
 	}()
@@ -145,16 +153,24 @@ func (x *XDPSniffer) Events() <-chan *PacketEvent {
 }
 
 func (x *XDPSniffer) Close() error {
-	close(x.stopCh)
-	if x.reader != nil {
-		_ = x.reader.Close()
-	}
-	if x.link != nil {
-		_ = x.link.Close()
-	}
-	if x.objs != nil {
-		_ = x.objs.Program.Close()
-		_ = x.objs.Packets.Close()
-	}
-	return nil
+	x.closeOnce.Do(func() {
+		close(x.stopCh)
+		var errs []error
+		if x.reader != nil {
+			errs = append(errs, x.reader.Close())
+		}
+		if x.link != nil {
+			errs = append(errs, x.link.Close())
+		}
+		if x.objs != nil {
+			if x.objs.Program != nil {
+				errs = append(errs, x.objs.Program.Close())
+			}
+			if x.objs.Packets != nil {
+				errs = append(errs, x.objs.Packets.Close())
+			}
+		}
+		x.closeErr = errors.Join(errs...)
+	})
+	return x.closeErr
 }

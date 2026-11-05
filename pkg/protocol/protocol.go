@@ -32,11 +32,37 @@ func (c Credential) String() string {
 	case c.Hash != "":
 		return c.Hash[:min(len(c.Hash), 40)]
 	case c.Token != "":
-		return c.Token[:min(len(c.Token), 40)] + "..."
+		if len(c.Token) > 40 {
+			return c.Token[:40] + "..."
+		}
+		return c.Token
 	case c.DNSQuery != "":
 		return "DNS: " + c.DNSQuery
 	default:
 		return c.Raw
+	}
+}
+
+// SafeString returns a terminal-safe representation of a captured value.
+// Full secrets remain available in the owner-only JSON export, but should not
+// be copied into terminal history or process logs by default.
+func (c Credential) SafeString() string {
+	switch {
+	case c.Password != "":
+		if c.Username != "" {
+			return c.Username + ":[redacted]"
+		}
+		return "[redacted password]"
+	case c.Hash != "":
+		return "[redacted hash]"
+	case c.Token != "":
+		return "[redacted token]"
+	case c.DNSQuery != "":
+		return "DNS: " + c.DNSQuery
+	case c.Raw != "":
+		return "[redacted payload]"
+	default:
+		return ""
 	}
 }
 
@@ -82,8 +108,10 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 			break
 		}
 
-		if strings.HasPrefix(line, "Authorization: Basic ") {
-			b64 := strings.TrimPrefix(line, "Authorization: Basic ")
+		lineLower := strings.ToLower(line)
+
+		if strings.HasPrefix(lineLower, "authorization: basic ") {
+			b64 := line[len("authorization: basic "):]
 			b64 = strings.TrimSpace(b64)
 			decoded, err := base64.StdEncoding.DecodeString(b64)
 			if err == nil {
@@ -97,15 +125,15 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 			}
 		}
 
-		if strings.HasPrefix(line, "Authorization: Bearer ") {
+		if strings.HasPrefix(lineLower, "authorization: bearer ") {
 			c := newCred("HTTP", "Bearer Token", srcIP, dstIP, dstPort)
-			c.Token = strings.TrimSpace(strings.TrimPrefix(line, "Authorization: Bearer "))
+			c.Token = strings.TrimSpace(line[len("authorization: bearer "):])
 			creds = append(creds, c)
 		}
 
-		if strings.HasPrefix(line, "Authorization: Digest ") {
+		if strings.HasPrefix(lineLower, "authorization: digest ") {
 			c := newCred("HTTP", "Digest Auth", srcIP, dstIP, dstPort)
-			digestStr := strings.TrimPrefix(line, "Authorization: Digest ")
+			digestStr := line[len("authorization: digest "):]
 			c.Raw = digestStr
 			if u := extractDigestField(digestStr, "username"); u != "" {
 				c.Username = u
@@ -116,8 +144,8 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 			creds = append(creds, c)
 		}
 
-		if strings.HasPrefix(line, "Authorization: NTLM ") {
-			b64 := strings.TrimSpace(strings.TrimPrefix(line, "Authorization: NTLM "))
+		if strings.HasPrefix(lineLower, "authorization: ntlm ") {
+			b64 := strings.TrimSpace(line[len("authorization: ntlm "):])
 			decoded, err := base64.StdEncoding.DecodeString(b64)
 			if err == nil {
 				ntlm := extractNTLMFields(decoded)
@@ -148,7 +176,6 @@ func ParseHTTP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 			}
 		}
 
-		lineLower := strings.ToLower(line)
 		for _, hdr := range []struct{ prefix, name string }{
 			{"x-api-key:", "X-Api-Key"},
 			{"x-auth-token:", "X-Auth-Token"},
@@ -841,9 +868,9 @@ func extractKerberosPrincipal(data []byte) string {
 		// Look for context tag [1] containing a SEQUENCE OF GeneralString
 		if data[i] == 0xa1 && i+3 < len(data) {
 			off := i + 2
-			if off < len(data) && data[off] == 0x30 {
+			if off+1 < len(data) && data[off] == 0x30 {
 				off += 2
-				if off < len(data) && data[off] == 0x1b {
+				if off+1 < len(data) && data[off] == 0x1b {
 					strLen := int(data[off+1])
 					off += 2
 					if off+strLen <= len(data) && strLen > 0 && strLen < 256 {
@@ -907,7 +934,7 @@ func ParseMySQL(payload []byte, srcIP, dstIP string, dstPort uint16) []Credentia
 		return nil
 	}
 
-	body := payload[4:]
+	body := payload[4 : 4+pktLen]
 
 	// Server greeting (seq=0, protocol version 10)
 	if seq == 0 && len(body) > 0 && body[0] == 10 {
@@ -1110,7 +1137,7 @@ func ParseRedis(payload []byte, srcIP, dstIP string, dstPort uint16) []Credentia
 				argc = 3
 			}
 			args := extractRESPArgs(lines[i+1:], argc)
-			if len(args) >= 2 && strings.ToUpper(args[0]) == "AUTH" {
+			if len(args) == argc && strings.ToUpper(args[0]) == "AUTH" {
 				c := newCred("REDIS", "Auth", srcIP, dstIP, dstPort)
 				if len(args) == 3 {
 					c.Username = args[1]
@@ -1159,7 +1186,7 @@ func ParseSNMP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 		n := int(payload[1] & 0x7f)
 		offset = 2 + n
 	}
-	if offset >= len(payload) {
+	if offset+2 > len(payload) {
 		return nil
 	}
 
@@ -1181,7 +1208,7 @@ func ParseSNMP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 	if version > 1 {
 		return nil
 	}
-	if offset >= len(payload) || payload[offset] != 0x04 {
+	if offset+2 > len(payload) || payload[offset] != 0x04 {
 		return nil
 	}
 	commLen := int(payload[offset+1])
