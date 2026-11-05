@@ -290,6 +290,28 @@ func TestCredentialString(t *testing.T) {
 	}
 }
 
+func TestCredentialSafeStringRedactsSecrets(t *testing.T) {
+	tests := []struct {
+		name string
+		cred Credential
+		want string
+	}{
+		{name: "password", cred: Credential{Username: "alice", Password: "secret"}, want: "alice:[redacted]"},
+		{name: "password without user", cred: Credential{Password: "secret"}, want: "[redacted password]"},
+		{name: "hash", cred: Credential{Hash: "deadbeef"}, want: "[redacted hash]"},
+		{name: "token", cred: Credential{Token: "token-value"}, want: "[redacted token]"},
+		{name: "raw", cred: Credential{Raw: "sensitive payload"}, want: "[redacted payload]"},
+		{name: "dns indicator", cred: Credential{DNSQuery: "tunnel.example.test"}, want: "DNS: tunnel.example.test"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cred.SafeString(); got != tt.want {
+				t.Fatalf("SafeString() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCredentialEmoji(t *testing.T) {
 	tests := []struct {
 		c    Credential

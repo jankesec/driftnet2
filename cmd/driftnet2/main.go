@@ -222,11 +222,8 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 			}
 			seen[key] = true
 			allCreds = append(allCreds, c)
-			// The finding stream intentionally displays captured values to the
-			// authorized operator; private file exports remain mode 0600.
-			// lgtm[go/clear-text-logging]
 			fmt.Printf("[%s] %s %s → %s — %s\n",
-				c.Protocol, c.Type, c.SrcIP, destination(c), c.String())
+				c.Protocol, c.Type, c.SrcIP, destination(c), c.SafeString())
 		}
 		if verbose && len(creds) == 0 {
 			fmt.Printf("[pkt %d] %s:%d → %s:%d proto=%d len=%d\n",

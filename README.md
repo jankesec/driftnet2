@@ -120,14 +120,14 @@ go build -ldflags="-s -w" -o driftnet2 ./cmd/driftnet2
       kernel-level packet sniffer & credential extractor
 
 [*] offline mode: examples/demo.pcap
-[FTP] Login 192.0.2.10 → 198.51.100.20:21 — demo:Password123
-[HTTP] Basic Auth 192.0.2.11 → 198.51.100.21:80 — demo:Password123
-[POP3] Login 192.0.2.12 → 198.51.100.22:110 — demo@example.test:Password123
-[IMAP] Login 192.0.2.13 → 198.51.100.23:143 — demo@example.test:Password123
-[SMTP] AUTH PLAIN 192.0.2.14 → 198.51.100.24:587 — postmaster:smtppass
-[TELNET] Session 192.0.2.15 → 198.51.100.25:23 — corp-router login: demo
-[LDAP] Simple Bind 192.0.2.16 → 198.51.100.26:389 — cn=admin,dc=corp:ldappass
-[SMB] NTLMv2 192.0.2.17 → 198.51.100.27:445 — jsmith::CORP:::4e544c4d53535000030000000
+[FTP] Login 192.0.2.10 → 198.51.100.20:21 — demo:[redacted]
+[HTTP] Basic Auth 192.0.2.11 → 198.51.100.21:80 — demo:[redacted]
+[POP3] Login 192.0.2.12 → 198.51.100.22:110 — demo@example.test:[redacted]
+[IMAP] Login 192.0.2.13 → 198.51.100.23:143 — demo@example.test:[redacted]
+[SMTP] AUTH PLAIN 192.0.2.14 → 198.51.100.24:587 — postmaster:[redacted]
+[TELNET] Session 192.0.2.15 → 198.51.100.25:23 — [redacted payload]
+[LDAP] Simple Bind 192.0.2.16 → 198.51.100.26:389 — cn=admin,dc=corp:[redacted]
+[SMB] NTLMv2 192.0.2.17 → 198.51.100.27:445 — [redacted hash]
 [DNS] Tunnel Detection 192.0.2.18 → 8.8.8.8:53 — DNS: TXlDMkV4ZmlsUGF5bG9hZERhdGFHb2VzSGVyZQ.c2.example.test
 
 [*] 9 packets processed, 9 unique credentials found in examples/demo.pcap

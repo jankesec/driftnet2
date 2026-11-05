@@ -31,8 +31,11 @@ func TestPrintCredentialPassword(t *testing.T) {
 		Username: "bob", Password: "secret",
 	}
 	out := captureStdout(t, func() { ui.PrintCredential(c) })
-	if !strings.Contains(out, "bob") || !strings.Contains(out, "secret") {
-		t.Errorf("output missing creds: %q", out)
+	if !strings.Contains(out, "bob:[redacted]") {
+		t.Errorf("output missing redacted finding: %q", out)
+	}
+	if strings.Contains(out, "secret") {
+		t.Errorf("output exposed password: %q", out)
 	}
 	if !strings.Contains(out, "→") {
 		t.Errorf("output missing arrow: %q", out)

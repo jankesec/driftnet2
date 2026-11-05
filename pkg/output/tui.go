@@ -79,37 +79,12 @@ func (t *TerminalUI) PrintCredential(c protocol.Credential) {
 
 	fmt.Printf("│ %s %s %s → %s │\n", ts, proto, src, dst)
 
-	switch {
-	case c.Password != "":
-		fmt.Printf("│   %s  %s : %s\n", c.Emoji(), c.Username, c.Password)
-	case c.Token != "":
-		token := c.Token
-		if len(token) > 64 {
-			token = token[:64] + "..."
-		}
-		fmt.Printf("│   %s  %s\n", c.Emoji(), token)
-	case c.Hash != "":
-		hash := c.Hash
-		if len(hash) > 64 {
-			hash = hash[:64] + "..."
-		}
-		if c.Username != "" {
-			fmt.Printf("│   %s  %s  %s\n", c.Emoji(), c.Username, hash)
-		} else {
-			fmt.Printf("│   %s  %s\n", c.Emoji(), hash)
-		}
-	case c.DNSQuery != "":
-		query := c.DNSQuery
-		if len(query) > 64 {
-			query = query[:64] + "..."
-		}
-		fmt.Printf("│   %s  TUNNEL: %s\n", c.Emoji(), query)
-	case c.Raw != "":
-		raw := c.Raw
-		if len(raw) > 64 {
-			raw = raw[:64] + "..."
-		}
-		fmt.Printf("│   %s  %s\n", c.Emoji(), raw)
+	value := c.SafeString()
+	if len(value) > 64 {
+		value = value[:64] + "..."
+	}
+	if value != "" {
+		fmt.Printf("│   %s  %s\n", c.Emoji(), value)
 	}
 }
 

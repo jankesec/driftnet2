@@ -43,6 +43,29 @@ func (c Credential) String() string {
 	}
 }
 
+// SafeString returns a terminal-safe representation of a captured value.
+// Full secrets remain available in the owner-only JSON export, but should not
+// be copied into terminal history or process logs by default.
+func (c Credential) SafeString() string {
+	switch {
+	case c.Password != "":
+		if c.Username != "" {
+			return c.Username + ":[redacted]"
+		}
+		return "[redacted password]"
+	case c.Hash != "":
+		return "[redacted hash]"
+	case c.Token != "":
+		return "[redacted token]"
+	case c.DNSQuery != "":
+		return "DNS: " + c.DNSQuery
+	case c.Raw != "":
+		return "[redacted payload]"
+	default:
+		return ""
+	}
+}
+
 func (c Credential) Emoji() string {
 	switch {
 	case c.Password != "":

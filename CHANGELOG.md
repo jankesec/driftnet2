@@ -22,6 +22,8 @@ Release-quality runtime, export, documentation, and supply-chain improvements.
   a larger viewport, and a deterministic cleanup step.
 - Credential and audit JSON files are written through a private `0600`
   temporary file and atomically renamed into place.
+- Terminal output redacts captured passwords, tokens, hashes, and raw payloads;
+  full evidence remains available only in the private JSON export.
 - Offline findings now show unambiguous `source → destination:port` endpoints
   and preserve timestamps from the original PCAP packets.
 - HTTP authorization schemes are matched case-insensitively.
