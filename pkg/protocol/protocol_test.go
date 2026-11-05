@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 )
 
@@ -274,8 +275,13 @@ func TestCredentialString(t *testing.T) {
 
 	c2 := Credential{Token: "eyJhbGciOiJIUzI1NiJ9"}
 	s := c2.String()
-	if len(s) < 20 {
-		t.Errorf("Token String() too short: %q", s)
+	if s != c2.Token {
+		t.Errorf("short token String() = %q, want %q", s, c2.Token)
+	}
+
+	cLong := Credential{Token: strings.Repeat("x", 41)}
+	if s := cLong.String(); s != strings.Repeat("x", 40)+"..." {
+		t.Errorf("long token String() = %q", s)
 	}
 
 	c3 := Credential{DNSQuery: "tunnel.c2.example.com"}
@@ -299,6 +305,27 @@ func TestCredentialEmoji(t *testing.T) {
 		if got := tt.c.Emoji(); got != tt.want {
 			t.Errorf("Emoji() for %+v: got %q, want %q", tt.c, got, tt.want)
 		}
+	}
+}
+
+func TestExperimentalParsersRejectTruncatedInput(t *testing.T) {
+	tests := []struct {
+		name  string
+		parse func([]byte, string, string, uint16) []Credential
+		data  []byte
+	}{
+		{name: "kerberos", parse: ParseKerberos, data: append([]byte{0x6a, 0x00, 0xa1, 0x01, 0x30}, make([]byte, 5)...)},
+		{name: "mysql", parse: ParseMySQL, data: []byte{0x20, 0x00, 0x00, 0x01, 0x00}},
+		{name: "postgresql", parse: ParsePostgreSQL, data: []byte{'p', 0x00, 0x00, 0x00, 0x20, 'x'}},
+		{name: "redis", parse: ParseRedis, data: []byte("*3\r\n$4\r\nAUTH\r\n$4\r\nuser\r\n")},
+		{name: "snmp", parse: ParseSNMP, data: []byte{0x30, 0x87, 0, 0, 0, 0, 0, 0, 0, 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.parse(tt.data, "192.0.2.1", "198.51.100.1", 0); len(got) != 0 {
+				t.Fatalf("truncated input returned credentials: %+v", got)
+			}
+		})
 	}
 }
 

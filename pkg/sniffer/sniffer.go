@@ -3,6 +3,7 @@ package sniffer
 import (
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/google/gopacket"
@@ -11,9 +12,10 @@ import (
 )
 
 type AFPacketSniffer struct {
-	handle   *pcap.Handle
-	linkType layers.LinkType
-	stopCh   chan struct{}
+	handle    *pcap.Handle
+	linkType  layers.LinkType
+	stopCh    chan struct{}
+	closeOnce sync.Once
 }
 
 type RawPacket struct {
@@ -79,7 +81,11 @@ func (s *AFPacketSniffer) Events() <-chan *RawPacket {
 				}
 				rp := convertPacket(pkt)
 				if rp != nil {
-					ch <- rp
+					select {
+					case ch <- rp:
+					case <-s.stopCh:
+						return
+					}
 				}
 			}
 		}
@@ -88,10 +94,12 @@ func (s *AFPacketSniffer) Events() <-chan *RawPacket {
 }
 
 func (s *AFPacketSniffer) Close() error {
-	close(s.stopCh)
-	if s.handle != nil {
-		s.handle.Close()
-	}
+	s.closeOnce.Do(func() {
+		close(s.stopCh)
+		if s.handle != nil {
+			s.handle.Close()
+		}
+	})
 	return nil
 }
 

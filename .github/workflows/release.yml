@@ -32,7 +32,16 @@ jobs:
       - name: Build
         env:
           CGO_ENABLED: "1"
-        run: go build -ldflags="-s -w" -o driftnet2 ./cmd/driftnet2
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go build -ldflags="-s -w \
+            -X github.com/jankesec/driftnet2/internal/buildinfo.Version=${VERSION} \
+            -X github.com/jankesec/driftnet2/internal/buildinfo.Commit=${COMMIT} \
+            -X github.com/jankesec/driftnet2/internal/buildinfo.Date=${BUILD_DATE}" \
+            -o driftnet2 ./cmd/driftnet2
+          ./driftnet2 -version
       - name: Package
         run: |
           tar -czf "driftnet2-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" driftnet2 LICENSE README.md

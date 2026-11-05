@@ -6,7 +6,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/jankesec/driftnet2?style=for-the-badge&color=yellow)](https://github.com/jankesec/driftnet2/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/jankesec/driftnet2?style=for-the-badge&color=blue)](https://github.com/jankesec/driftnet2/network/members)
 [![Homebrew Formula](https://img.shields.io/badge/Homebrew-jankesec%2Ftap-blue?style=for-the-badge&logo=homebrew)](https://github.com/jankesec/homebrew-tap)
-[![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![eBPF](https://img.shields.io/badge/eBPF-Linux_5.8+_XDP-FF6600?style=for-the-badge&logo=linux&logoColor=white)](https://ebpf.io)
 [![Protocols](https://img.shields.io/badge/Protocols-9_Engines-00FF66?style=for-the-badge)]()
 [![Format](https://img.shields.io/badge/NTLMv2-Hashcat_5600_Ready-blueviolet?style=for-the-badge)]()
@@ -15,7 +15,7 @@
 
 <p align="center">
   <b>High-performance, kernel-level packet inspection, credential extraction, and defensive security auditing.</b><br>
-  <sub>eBPF/XDP In-Kernel Capture · AF_PACKET / libpcap Fallback · 9 Protocols · Hashcat-Ready NTLMv2 · DNS Tunnel Heuristics · Blue-Team Remediation</sub>
+  <sub>eBPF/XDP In-Kernel Filtering · libpcap Capture Fallback · 9 Protocols · Hashcat-Ready NTLMv2 · DNS Tunnel Heuristics · Blue-Team Remediation</sub>
 </p>
 
 <p align="center">
@@ -40,12 +40,11 @@
 
 ## ⚡ Architecture: Why Kernel-Level eBPF/XDP Matters
 
-Traditional network sniffers (such as tcpdump, Wireshark, net-creds, and Bettercap) rely entirely on standard userspace packet capture APIs (e.g. `libpcap` or raw `AF_PACKET` sockets). In high-throughput 10G/40G enterprise networks, this model introduces severe drawbacks:
-
-1. **Context Switching & Packet Drops:** Every frame must traverse the kernel's network stack, allocate an `sk_buff`, copy the buffer to userspace, and wake up listener threads. Under heavy load, buffers overflow and credentials are lost.
-2. **Detection Footprint:** Standard promiscuous mode sockets and raw socket bindings leave clear operational artifacts across host monitoring agents and EDR telemetry.
-
-**Driftnet2 bypasses these limitations using in-kernel eBPF and eXpress Data Path (XDP):**
+Driftnet2 supports two capture paths. On supported Linux hosts, an eBPF program
+attached at XDP filters candidate TCP/UDP traffic before sending bounded packet
+records through a BPF ring buffer. If the XDP object cannot be loaded—or on
+macOS—the tool uses libpcap. Both paths feed the same protocol parsers and
+output pipeline.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -63,15 +62,15 @@ Traditional network sniffers (such as tcpdump, Wireshark, net-creds, and Betterc
 │   │   └───────────┬────────────┘                                                       │     │
 │   │               │                                                                    │     │
 │   │   ┌───────────▼────────────┐                                                       │     │
-│   │   │ BPF Ring Buffer Stream │ ──> In-kernel memory ring buffer (Zero socket alloc)  │     │
+│   │   │ BPF Ring Buffer Stream │ ──> Bounded packet records for userspace              │     │
 │   │   └───────────┬────────────┘                                                       │     │
 │   └───────────────┼────────────────────────────────────────────────────────────────────┘     │
-│                   │ Zero-Copy Kernel Stream                                                  │
+│                   │ Ring-buffer event stream                                                  │
 │   ┌───────────────▼────────────────────────────────────────────────────────────────────┐     │
 │   │                              USERSPACE ENGINE                                      │     │
 │   │                                                                                    │     │
 │   │   ┌────────────────────────────────────────────────────────────────────────────┐   │     │
-│   │   │ Dual-Path Ingestion: eBPF Ring Buffer (Linux)  OR  AF_PACKET / libpcap     │   │     │
+│   │   │ Dual-Path Ingestion: eBPF Ring Buffer (Linux) OR libpcap Capture           │   │     │
 │   │   └─────────────────────────────────────┬──────────────────────────────────────┘   │     │
 │   │                                         │                                          │     │
 │   │   ┌─────────────────────────────────────▼──────────────────────────────────────┐   │     │
@@ -88,9 +87,13 @@ Traditional network sniffers (such as tcpdump, Wireshark, net-creds, and Betterc
 └─────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **In-Kernel XDP Processing:** Evaluates frames directly in the network driver before kernel memory allocation, extracting candidate streams into high-speed BPF ring buffers.
-- **Graceful Universal Fallback:** Automatically detects the operating environment. If eBPF/XDP is unavailable (macOS, BSD, or unprivileged containers), Driftnet2 falls back seamlessly to `AF_PACKET` / `libpcap` with zero difference in parser accuracy or output format.
-- **Single Compact Binary:** Zero runtime dependencies. No Python interpreters, no Ruby gems, no shared library bloat. Ships as a single static binary (~5MB).
+- **Early Linux filtering:** The XDP program selects supported TCP/UDP ports and
+  submits bounded packet data through a BPF ring buffer.
+- **Portable fallback:** If XDP is unavailable, Driftnet2 uses libpcap while
+  retaining the same parser and output behavior.
+- **Compact Go executable:** No language runtime is required. Source builds use
+  cgo/gopacket and therefore require libpcap at build time and on the target
+  system unless the release artifact supplies it independently.
 
 ---
 
@@ -117,15 +120,15 @@ go build -ldflags="-s -w" -o driftnet2 ./cmd/driftnet2
       kernel-level packet sniffer & credential extractor
 
 [*] offline mode: examples/demo.pcap
-[FTP] Login 192.0.2.10:198.51.100.20 → demo:Password123
-[HTTP] Basic Auth 192.0.2.11:198.51.100.21 → demo:Password123
-[POP3] Login 192.0.2.12:198.51.100.22 → demo@example.test:Password123
-[IMAP] Login 192.0.2.13:198.51.100.23 → demo@example.test:Password123
-[SMTP] AUTH PLAIN 192.0.2.14:198.51.100.24 → postmaster:smtppass
-[TELNET] Session 192.0.2.15:198.51.100.25 → corp-router login: demo
-[LDAP] Simple Bind 192.0.2.16:198.51.100.26 → cn=admin,dc=corp:ldappass
-[SMB] NTLMv2 192.0.2.17:198.51.100.27 → jsmith::CORP:::4e544c4d53535000030000000
-[DNS] Tunnel Detection 192.0.2.18:8.8.8.8 → DNS: TXlDMkV4ZmlsUGF5bG9hZERhdGFHb2VzSGVyZQ.c2.example.test
+[FTP] Login 192.0.2.10 → 198.51.100.20:21 — demo:Password123
+[HTTP] Basic Auth 192.0.2.11 → 198.51.100.21:80 — demo:Password123
+[POP3] Login 192.0.2.12 → 198.51.100.22:110 — demo@example.test:Password123
+[IMAP] Login 192.0.2.13 → 198.51.100.23:143 — demo@example.test:Password123
+[SMTP] AUTH PLAIN 192.0.2.14 → 198.51.100.24:587 — postmaster:smtppass
+[TELNET] Session 192.0.2.15 → 198.51.100.25:23 — corp-router login: demo
+[LDAP] Simple Bind 192.0.2.16 → 198.51.100.26:389 — cn=admin,dc=corp:ldappass
+[SMB] NTLMv2 192.0.2.17 → 198.51.100.27:445 — jsmith::CORP:::4e544c4d53535000030000000
+[DNS] Tunnel Detection 192.0.2.18 → 8.8.8.8:53 — DNS: TXlDMkV4ZmlsUGF5bG9hZERhdGFHb2VzSGVyZQ.c2.example.test
 
 [*] 9 packets processed, 9 unique credentials found in examples/demo.pcap
 [*] saved → creds.json
@@ -143,12 +146,12 @@ Credential Exposure Audit
 ```mermaid
 flowchart TD
     subgraph KERNEL ["Kernel Space (Linux eBPF / XDP)"]
-        NIC["Network Interface (NIC)"] -->|Raw Ingress Frames| XDP["eBPF XDP Driver Hook\n(Kernel-Level / Zero EDR Footprint)"]
-        XDP -->|L4 Filtered Packets| RING["Perf / BPF Ring Buffer"]
+        NIC["Network Interface (NIC)"] -->|Raw Ingress Frames| XDP["eBPF XDP Hook\n(Early Port Filtering)"]
+        XDP -->|L4 Filtered Packets| RING["BPF Ring Buffer"]
     end
 
     subgraph USERSPACE ["Go Userspace Engine"]
-        PCAP["libpcap / AF_PACKET (macOS & BSD)"] -.-> PARSER
+        PCAP["libpcap Capture (Linux / macOS)"] -.-> PARSER
         RING --> PARSER["Multi-Protocol Dissector\n(HTTP, DNS, SMB, LDAP, FTP, Telnet, POP3, IMAP, SMTP)"]
         PARSER --> REGEX["Credential & Token Extractor\n(Basic, Bearer, NTLMv2, Cookies, Hashes)"]
         REGEX --> OUT["Output Pipeline"]
@@ -247,14 +250,18 @@ brew install jankesec/tap/driftnet2
 
 ### 2. Build from Source
 
+Requirements: Go 1.25+ and libpcap development headers (`libpcap-dev` on
+Debian/Ubuntu, `libpcap-devel` on Fedora; provided by the system on macOS).
+
 ```bash
 # Clone repository
 git clone https://github.com/jankesec/driftnet2.git && cd driftnet2
 
 # Build optimized binary
 make build
-# Or via go build:
-go build -ldflags="-s -w" -o driftnet2 ./cmd/driftnet2
+
+# Confirm embedded version, commit, and build time
+./driftnet2 -version
 ```
 
 ### 3. Linux Kernel eBPF/XDP Compilation (Optional)
@@ -266,7 +273,7 @@ make bpf    # Compiles bpf/xdp_sniff.c into xdp_sniff.o
 ```
 
 > [!NOTE]
-> Driftnet2 auto-locates `xdp_sniff.o` in the working directory, binary directory, or via `-bpf /path/to/xdp_sniff.o` / `DRIFTNET2_BPF` environment variable. If absent, it automatically uses high-performance `AF_PACKET`.
+> Driftnet2 auto-locates `xdp_sniff.o` in the working directory, binary directory, or via `-bpf /path/to/xdp_sniff.o` / `DRIFTNET2_BPF` environment variable. If absent, it uses the libpcap capture path.
 
 ### 4. Operational Invocations
 
@@ -298,10 +305,11 @@ hashcat -m 5600 -a 0 ntlm_hashes.txt /usr/share/wordlists/rockyou.txt -r rules/b
 ```
 
 ### 2. Lateral Movement Eavesdropping on Segmented Pivots
-Deploy Driftnet2 as a self-contained static binary onto an authorized jump host to intercept administrative protocols:
+Deploy Driftnet2 to an authorized assessment host with a compatible libpcap
+runtime to inspect administrative protocols:
 
 ```bash
-# Transfer single binary over SSH:
+# Transfer the release binary over SSH:
 scp driftnet2 operator@jumpbox:/tmp/
 
 # Run headless with JSON streaming:
@@ -317,20 +325,17 @@ sudo ./driftnet2 -iface eth0 --proto dns -v
 
 ---
 
-## 🔬 Comparison
+## 🔬 Capture Mode Matrix
 
-| Feature / Capability | **Driftnet2** | Bettercap | Net-Creds | PCredz | TShark | Zeek / Bro |
-|:---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **In-Kernel eBPF/XDP Capture** | **Yes (Linux 5.8+)** | No | No | No | No | No |
-| **Zero-Copy Ring Buffer** | **Yes** | No | No | No | No | No |
-| **HTTP Basic/POST/Bearer/NTLM** | **Yes** | Basic | Yes | No | Manual Filter | Scripted |
-| **SMB NTLMv2 Hashcat Output** | **Yes (`-m 5600`)** | No | No | No | Manual Filter | Scripted |
-| **DNS Tunneling Heuristics** | **Yes (Entropy)** | No | No | No | No | Scripted |
-| **Blue Team Exposure Audit** | **Yes (`-audit`)** | No | No | No | No | Third-party |
-| **Offline PCAP Replay** | **Yes (0 Privileges)**| No | Yes | Yes | Yes | Yes |
-| **Structured JSON Export** | **Yes** | Yes | No | No | Yes | Yes |
-| **Binary Footprint** | **~5MB (Static Go)** | ~15MB | Python script | Python script | ~80MB+ | Complex Engine |
-| **Cross-Platform Support** | **Linux / macOS / BSD**| Linux / macOS | Linux / macOS | Linux / macOS | All | Linux / macOS |
+| Mode | Platform | Privilege | Requirements | Intended use |
+|:---|:---|:---:|:---|:---|
+| **XDP/eBPF live capture** | Linux | Root or equivalent capabilities | Compiled `xdp_sniff.o`, compatible kernel/driver | Early filtering on supported interfaces |
+| **libpcap live capture** | Linux / macOS | Usually root or capture privileges | libpcap and an accessible interface | Portable live inspection and XDP fallback |
+| **Offline PCAP replay** | Linux / macOS | None for readable files | libpcap | Reproducible triage, demos, and evidence review |
+
+All modes use the same nine protocol parsers, deduplication, JSON export, and
+optional exposure audit. Encrypted application payloads remain opaque unless
+traffic is decrypted before it reaches Driftnet2.
 
 ---
 
@@ -342,7 +347,7 @@ Every pull request and release is validated across Linux and macOS environments:
 |:---|:---|
 | **Memory Safety & Race Testing** | `go test -race ./...` executed across all protocol parsers and buffer writers |
 | **Static Code Analysis** | `golangci-lint` clean with 0 issues |
-| **Security Auditing** | `gosec` static security scanner clean with 0 vulnerabilities |
+| **Security Auditing** | `gosec` static analysis gate |
 | **eBPF Compilation** | Verified compilation in CI with `clang` and `llvm` |
 | **Reproducibility** | Built-in test capture generator (`examples/gen`) ensuring deterministic parser tests |
 
@@ -361,9 +366,9 @@ driftnet2/
 ├── pkg/
 │   ├── audit/                 # Blue-team exposure auditor & remediation generator
 │   ├── ebpf/                  # Cilium/ebpf loader & kernel ring buffer binding
-│   ├── output/                # Live TUI visualizer & JSON streaming formatters
+│   ├── output/                # Live TUI and private atomic JSON/audit exports
 │   ├── protocol/              # 9 Protocol parsing engines (HTTP, SMB, DNS, etc.)
-│   └── sniffer/               # Capture engine (XDP + AF_PACKET/libpcap) & PCAP writer
+│   └── sniffer/               # Capture engine (XDP + libpcap) and PCAP writer
 ├── docs/                      # Technical architecture, eBPF specs & parser guides
 ├── examples/                  # Deterministic demo PCAP generator & sample capture
 ├── Makefile                   # Unified compilation, testing, and linting workflow

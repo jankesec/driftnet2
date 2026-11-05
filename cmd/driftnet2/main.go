@@ -4,15 +4,18 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 
+	"github.com/jankesec/driftnet2/internal/buildinfo"
 	"github.com/jankesec/driftnet2/pkg/audit"
 	"github.com/jankesec/driftnet2/pkg/output"
 	"github.com/jankesec/driftnet2/pkg/protocol"
@@ -44,7 +47,12 @@ func main() {
 	bpfPath := flag.String("bpf", "", "path to compiled eBPF object (default: auto-detect)")
 	audit := flag.Bool("audit", false, "print a credential exposure audit report at the end")
 	auditOut := flag.String("audit-output", "", "write the audit report as JSON to a file")
+	showVersion := flag.Bool("version", false, "print version and build information")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(buildinfo.String())
+		return
+	}
 
 	protoSet := parseProtoSet(*protocols)
 	if unknown := unknownProtocols(protoSet); len(unknown) > 0 {
@@ -75,7 +83,7 @@ func main() {
 		log.Fatalf("interface %s not found", *iface)
 	}
 
-	mode := "AF_PACKET"
+	mode := "PCAP"
 	hasXDP := false
 	bpfObj := ""
 	if runtime.GOOS == "linux" {
@@ -101,10 +109,9 @@ func main() {
 	if hasXDP {
 		sniff, err = sniffer.NewXDPLive(*iface, bpfObj)
 		if err != nil {
-			log.Printf("XDP failed: %v — falling back to AF_PACKET", err)
+			log.Printf("XDP failed: %v — falling back to libpcap", err)
 			hasXDP = false
-			mode = "AF_PACKET"
-			sniff, err = sniffer.NewAFPacketSniffer(*iface)
+			mode = "PCAP"
 		}
 	}
 	if !hasXDP {
@@ -148,7 +155,7 @@ func main() {
 				continue
 			}
 
-			creds := dispatchProtocol(pkt, protoSet)
+			creds := credentialsFromPacket(pkt, protoSet)
 			for _, c := range creds {
 				key := dedupKey(c)
 				if seen[key] {
@@ -179,8 +186,9 @@ func main() {
 	if *jsonOut != "" {
 		if err := output.WriteJSON(finalCreds, *jsonOut); err != nil {
 			log.Printf("json: %v", err)
+		} else {
+			fmt.Printf("[*] saved %d credentials → %s\n", len(finalCreds), *jsonOut)
 		}
-		fmt.Printf("[*] saved %d credentials → %s\n", len(finalCreds), *jsonOut)
 	}
 
 	if *audit {
@@ -206,7 +214,7 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 		if len(pkt.Payload) == 0 {
 			continue
 		}
-		creds := dispatchProtocol(pkt, protoSet)
+		creds := credentialsFromPacket(pkt, protoSet)
 		for _, c := range creds {
 			key := dedupKey(c)
 			if seen[key] {
@@ -214,7 +222,8 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 			}
 			seen[key] = true
 			allCreds = append(allCreds, c)
-			fmt.Printf("[%s] %s %s:%s → %s\n", c.Protocol, c.Type, c.SrcIP, c.DstIP, c.String())
+			fmt.Printf("[%s] %s %s → %s — %s\n",
+				c.Protocol, c.Type, c.SrcIP, destination(c), c.String())
 		}
 		if verbose && len(creds) == 0 {
 			fmt.Printf("[pkt %d] %s:%d → %s:%d proto=%d len=%d\n",
@@ -227,8 +236,9 @@ func runOffline(filename string, protoSet map[string]bool, jsonOut string, verbo
 	if jsonOut != "" {
 		if err := output.WriteJSON(allCreds, jsonOut); err != nil {
 			log.Printf("json: %v", err)
+		} else {
+			fmt.Printf("[*] saved → %s\n", jsonOut)
 		}
-		fmt.Printf("[*] saved → %s\n", jsonOut)
 	}
 
 	if audit {
@@ -249,11 +259,29 @@ func emitAudit(creds []protocol.Credential, auditOut string) {
 		log.Printf("audit json: %v", err)
 		return
 	}
-	if err := os.WriteFile(auditOut, data, 0o600); err != nil {
+	if err := output.WritePrivateFile(auditOut, data); err != nil {
 		log.Printf("audit output: %v", err)
 		return
 	}
 	fmt.Printf("[*] audit report → %s\n", auditOut)
+}
+
+func credentialsFromPacket(pkt *sniffer.RawPacket, protoSet map[string]bool) []protocol.Credential {
+	creds := dispatchProtocol(pkt, protoSet)
+	if pkt.Timestamp.IsZero() {
+		return creds
+	}
+	for i := range creds {
+		creds[i].Timestamp = pkt.Timestamp
+	}
+	return creds
+}
+
+func destination(c protocol.Credential) string {
+	if c.DstPort == 0 {
+		return c.DstIP
+	}
+	return net.JoinHostPort(c.DstIP, strconv.Itoa(int(c.DstPort)))
 }
 
 func dispatchProtocol(pkt *sniffer.RawPacket, protoSet map[string]bool) []protocol.Credential {

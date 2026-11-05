@@ -5,7 +5,7 @@ setup, the quality gates, and the contribution workflow.
 
 ## Prerequisites
 
-- **Go 1.24+**
+- **Go 1.25+**
 - **libpcap headers** — `libpcap-dev` (Debian/Ubuntu) or `libpcap-devel`
   (Fedora); preinstalled on macOS. Required because the capture path uses cgo
   via gopacket.

@@ -32,7 +32,10 @@ func (c Credential) String() string {
 	case c.Hash != "":
 		return c.Hash[:min(len(c.Hash), 40)]
 	case c.Token != "":
-		return c.Token[:min(len(c.Token), 40)] + "..."
+		if len(c.Token) > 40 {
+			return c.Token[:40] + "..."
+		}
+		return c.Token
 	case c.DNSQuery != "":
 		return "DNS: " + c.DNSQuery
 	default:
@@ -842,9 +845,9 @@ func extractKerberosPrincipal(data []byte) string {
 		// Look for context tag [1] containing a SEQUENCE OF GeneralString
 		if data[i] == 0xa1 && i+3 < len(data) {
 			off := i + 2
-			if off < len(data) && data[off] == 0x30 {
+			if off+1 < len(data) && data[off] == 0x30 {
 				off += 2
-				if off < len(data) && data[off] == 0x1b {
+				if off+1 < len(data) && data[off] == 0x1b {
 					strLen := int(data[off+1])
 					off += 2
 					if off+strLen <= len(data) && strLen > 0 && strLen < 256 {
@@ -908,7 +911,7 @@ func ParseMySQL(payload []byte, srcIP, dstIP string, dstPort uint16) []Credentia
 		return nil
 	}
 
-	body := payload[4:]
+	body := payload[4 : 4+pktLen]
 
 	// Server greeting (seq=0, protocol version 10)
 	if seq == 0 && len(body) > 0 && body[0] == 10 {
@@ -1111,7 +1114,7 @@ func ParseRedis(payload []byte, srcIP, dstIP string, dstPort uint16) []Credentia
 				argc = 3
 			}
 			args := extractRESPArgs(lines[i+1:], argc)
-			if len(args) >= 2 && strings.ToUpper(args[0]) == "AUTH" {
+			if len(args) == argc && strings.ToUpper(args[0]) == "AUTH" {
 				c := newCred("REDIS", "Auth", srcIP, dstIP, dstPort)
 				if len(args) == 3 {
 					c.Username = args[1]
@@ -1160,7 +1163,7 @@ func ParseSNMP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 		n := int(payload[1] & 0x7f)
 		offset = 2 + n
 	}
-	if offset >= len(payload) {
+	if offset+2 > len(payload) {
 		return nil
 	}
 
@@ -1182,7 +1185,7 @@ func ParseSNMP(payload []byte, srcIP, dstIP string, dstPort uint16) []Credential
 	if version > 1 {
 		return nil
 	}
-	if offset >= len(payload) || payload[offset] != 0x04 {
+	if offset+2 > len(payload) || payload[offset] != 0x04 {
 		return nil
 	}
 	commLen := int(payload[offset+1])
